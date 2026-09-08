@@ -10,6 +10,7 @@ from .config import Account
 from .graph import GraphClient
 from .models import KIND_ORDER, CollectionResult, Item
 from .state import State
+from . import triage
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,22 @@ class AccountReport:
         items: list[Item] = []
         for result in self.results:
             items.extend(result.items)
-        return sorted(items, key=lambda i: i.sort_key, reverse=True)
+        # Most severe first, then newest -- so a complaint never sits
+        # below a run of ordinary comments that happen to be newer.
+        return sorted(
+            items,
+            key=lambda i: (i.severity, i.sort_key),
+            reverse=True,
+        )
+
+    @property
+    def flagged(self) -> list[Item]:
+        return [i for i in self.new_items if i.needs_attention]
+
+    @property
+    def complaints(self) -> list[Item]:
+        return [i for i in self.new_items
+                if i.severity >= triage.SEVERITY_COMPLAINT]
 
     @property
     def problems(self) -> list[CollectionResult]:
@@ -40,6 +56,14 @@ class Report:
     @property
     def total_new(self) -> int:
         return sum(len(a.new_items) for a in self.accounts)
+
+    @property
+    def total_flagged(self) -> int:
+        return sum(len(a.flagged) for a in self.accounts)
+
+    @property
+    def total_complaints(self) -> int:
+        return sum(len(a.complaints) for a in self.accounts)
 
     @property
     def has_problems(self) -> bool:
@@ -90,7 +114,7 @@ def run(
 
             if result.ok and result.items:
                 fresh = state.filter_new(account.slug, kind, result.items)
-                result.items = fresh
+                result.items = triage.apply(fresh)
                 if record:
                     state.record(account.slug, kind, [i.id for i in fresh])
             elif result.ok and record:

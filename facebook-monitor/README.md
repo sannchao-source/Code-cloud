@@ -17,8 +17,8 @@ recommendations. Reading Graph directly covers all seven surfaces:
 
 | Source | Kind | Graph edge |
 |---|---|---|
+| **Comments on ads, both placements** | `ad_comment` | `/{ad-account}/ads` → `effective_object_story_id` *and* `effective_instagram_media_id` → `comments` |
 | Comments on Page posts | `page_comment` | `/{page-id}/posts` → `comments` |
-| Comments on ads (incl. dark posts) | `ad_comment` | `/{ad-account}/ads` → `effective_object_story_id` → `comments` |
 | Comments on Instagram posts | `instagram_comment` | `/{ig-user-id}/media` → `comments` |
 | Messenger DMs | `messenger_dm` | `/{page-id}/conversations?platform=messenger` |
 | Instagram DMs | `instagram_dm` | `/{ig-user-id}/conversations?platform=instagram` |
@@ -27,6 +27,34 @@ recommendations. Reading Graph directly covers all seven surfaces:
 
 Your own replies are filtered out of DM threads, so an answered enquiry
 does not keep showing up as something needing attention.
+
+### Ad comments get priority
+
+A comment on an organic post is seen by whoever happens to visit. A comment
+under a *running ad* is served to every future person that ad reaches, so a
+hostile one costs money for as long as it stands. Ad comments therefore lead
+the digest, and each item is scored:
+
+| | Meaning |
+|---|---|
+| `‼` | possible complaint — shown first, above everything newer |
+| `⚠` | an unanswered question, i.e. a lead going cold |
+| `•` | everything else |
+
+The scoring is a keyword heuristic (`fbmonitor/triage.py`), not a sentiment
+model. It **orders** the digest and never filters it — every item collected
+is always shown. Treat a `‼` as "look here first" and its absence as no
+information at all; tune the word lists to how your customers actually
+complain.
+
+### One ad has two comment threads
+
+An ad running Advantage+ placements appears on both Facebook and Instagram,
+and each carries a **separate** thread. Reading only the Facebook side
+silently loses every Instagram comment on the same ad, so both IDs on the
+creative are walked. A business also commonly runs ads from several ad
+accounts at once (in-house plus an agency's), so `ad_account_ids` takes a
+list and one unreadable account does not lose the others.
 
 ## Setup
 
@@ -135,6 +163,11 @@ minutes sits well inside the rate limits for a couple of Pages.
 - **Ad comments need the right token.** Comments on an ad live on the Page
   post behind it, so the token must be a Page token for the Page the ads run
   under. If it is not, the collector says so rather than reporting nothing.
+- **Polling is not instant.** A 15-minute cron means a bad comment can sit
+  under a live ad for up to 15 minutes. If that is too slow, the next step is
+  a Page webhook subscription on the `feed` topic, which pushes comment
+  events within seconds — it needs a public HTTPS endpoint to receive them,
+  so it is real infrastructure rather than a cron line.
 - **Recommendations have no stable ID** on every entry, so one is derived
   from the reviewer and timestamp to keep deduplication working.
 
@@ -144,4 +177,4 @@ minutes sits well inside the rate limits for a couple of Pages.
 python3 -m unittest discover -s tests -v
 ```
 
-30 tests, no network — Graph is faked at the client seam.
+41 tests, no network — Graph is faked at the client seam.

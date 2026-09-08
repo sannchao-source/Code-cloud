@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fbmonitor.collectors.ads import _story_ids, collect_ad_comments
+from fbmonitor.collectors.ads import _merge_targets, collect_ad_comments
 from fbmonitor.collectors.facebook import (
     collect_messenger,
     collect_page_comments,
@@ -22,8 +22,11 @@ from fbmonitor.collectors.instagram import collect_instagram_comments
 from fbmonitor.config import Account, ConfigError, load_accounts
 from fbmonitor.digest import render_json, render_text
 from fbmonitor.graph import GraphClient, GraphError
-from fbmonitor.models import KIND_PAGE_COMMENT, Item, parse_time
-from fbmonitor.monitor import run
+from fbmonitor import triage
+from fbmonitor.models import (KIND_AD_COMMENT, KIND_ORDER,
+                             KIND_PAGE_COMMENT, Item, parse_time)
+from fbmonitor.models import CollectionResult
+from fbmonitor.monitor import AccountReport, run
 from fbmonitor.state import State
 
 
@@ -48,7 +51,7 @@ class FakeGraph:
 def account(**kw):
     base = dict(name="Test Co", slug="test-co", token_env="TEST_TOKEN",
                 facebook_page_id="100", instagram_user_id="200",
-                ad_account_id="act_300")
+                ad_account_ids=["act_300"])
     base.update(kw)
     return Account(**base)
 
@@ -175,29 +178,71 @@ class TestInstagram(unittest.TestCase):
 
 class TestAdComments(unittest.TestCase):
     def test_dedups_creatives_shared_across_ads(self):
-        ads = [
+        fb, ig = {}, {}
+        _merge_targets([
             {"id": "a1", "name": "Spring", "creative": {
-                "effective_object_story_id": "100_777"}},
+                "effective_object_story_id": "100_777",
+                "effective_instagram_media_id": "ig_888"}},
             {"id": "a2", "name": "Spring copy", "creative": {
-                "effective_object_story_id": "100_777"}},
+                "effective_object_story_id": "100_777",
+                "effective_instagram_media_id": "ig_888"}},
             {"id": "a3", "name": "No creative"},
-        ]
-        stories = _story_ids(ads)
-        self.assertEqual(list(stories), ["100_777"])
+        ], fb, ig)
+        self.assertEqual(list(fb), ["100_777"])
+        self.assertEqual(list(ig), ["ig_888"])
 
-    def test_reads_comments_on_a_dark_post(self):
+    def test_reads_both_placements_of_one_ad(self):
+        # An ad on Advantage+ placements runs on Facebook and Instagram, and
+        # each carries its own separate comment thread. Reading only the
+        # Facebook side silently loses half the comments.
         graph = FakeGraph({
             "act_300/ads": {"data": [{
                 "id": "a1", "name": "Father's Day",
-                "creative": {"effective_object_story_id": "100_777"}}]},
+                "creative": {"effective_object_story_id": "100_777",
+                             "effective_instagram_media_id": "ig_888"}}]},
             "100_777/comments": {"data": [{
-                "id": "ac1", "message": "How much?",
+                "id": "fb1", "message": "How much?",
                 "from": {"name": "Chris"},
                 "created_time": "2026-09-08T08:00:00+0000"}]},
+            "ig_888/comments": {"data": [{
+                "id": "ig1", "text": "overpriced tbh", "username": "someone",
+                "timestamp": "2026-09-08T09:00:00+0000"}]},
         })
         result = collect_ad_comments(graph, account())
-        self.assertEqual(len(result.items), 1)
-        self.assertIn("Father's Day", result.items[0].context)
+        placements = {i.extra["placement"] for i in result.items}
+        self.assertEqual(placements, {"facebook", "instagram"})
+        self.assertEqual(len(result.items), 2)
+
+    def test_walks_every_configured_ad_account(self):
+        graph = FakeGraph({
+            "act_300/ads": {"data": [{"id": "a1", "name": "A", "creative": {
+                "effective_object_story_id": "100_1"}}]},
+            "act_301/ads": {"data": [{"id": "a2", "name": "B", "creative": {
+                "effective_object_story_id": "100_2"}}]},
+            "100_1/comments": {"data": [{
+                "id": "c1", "message": "one", "from": {"name": "X"},
+                "created_time": "2026-09-08T08:00:00+0000"}]},
+            "100_2/comments": {"data": [{
+                "id": "c2", "message": "two", "from": {"name": "Y"},
+                "created_time": "2026-09-08T08:00:00+0000"}]},
+        })
+        result = collect_ad_comments(
+            graph, account(ad_account_ids=["act_300", "act_301"]))
+        self.assertEqual({i.id for i in result.items}, {"c1", "c2"})
+
+    def test_one_bad_ad_account_does_not_lose_the_others(self):
+        graph = FakeGraph(
+            {"act_301/ads": {"data": [{"id": "a2", "name": "B", "creative": {
+                "effective_object_story_id": "100_2"}}]},
+             "100_2/comments": {"data": [{
+                 "id": "c2", "message": "two", "from": {"name": "Y"},
+                 "created_time": "2026-09-08T08:00:00+0000"}]}},
+            errors={"act_300/ads": GraphError("denied", code=200)},
+        )
+        result = collect_ad_comments(
+            graph, account(ad_account_ids=["act_300", "act_301"]))
+        self.assertEqual([i.id for i in result.items], ["c2"])
+        self.assertIn("act_300", result.skipped_reason)
 
     def test_unreadable_story_does_not_fail_the_collector(self):
         graph = FakeGraph(
@@ -209,6 +254,64 @@ class TestAdComments(unittest.TestCase):
         result = collect_ad_comments(graph, account())
         self.assertTrue(result.ok)
         self.assertIn("could be read", result.skipped_reason)
+
+
+class TestTriage(unittest.TestCase):
+    def _item(self, text, kind=KIND_AD_COMMENT):
+        return Item(kind=kind, id="x", account="a", created_time=None, text=text)
+
+    def test_complaint_outranks_a_question(self):
+        # The whole point of severity: a complaint under a live ad must not
+        # sit below a newer, more ordinary comment.
+        complaint, _ = triage.assess(self._item("total rip off, never again"))
+        question, _ = triage.assess(self._item("how much for a fade?"))
+        ordinary, _ = triage.assess(self._item("nice one lads"))
+        self.assertGreater(complaint, question)
+        self.assertGreater(question, ordinary)
+        self.assertEqual(complaint, triage.SEVERITY_COMPLAINT)
+
+    def test_complaint_reason_names_the_match(self):
+        _, reason = triage.assess(self._item("absolute rip off"))
+        self.assertIn("rip off", reason)
+
+    def test_ordinary_page_comment_is_not_flagged(self):
+        severity, _ = triage.assess(
+            self._item("looks great", kind=KIND_PAGE_COMMENT))
+        self.assertEqual(severity, triage.SEVERITY_NONE)
+
+    def test_complaint_on_a_page_comment_is_still_flagged(self):
+        severity, _ = triage.assess(
+            self._item("staff were rude", kind=KIND_PAGE_COMMENT))
+        self.assertEqual(severity, triage.SEVERITY_COMPLAINT)
+
+    def test_plain_question_anywhere_is_a_lead(self):
+        severity, _ = triage.assess(
+            self._item("are you open sunday?", kind=KIND_PAGE_COMMENT))
+        self.assertEqual(severity, triage.SEVERITY_LEAD)
+
+    def test_triage_never_drops_items(self):
+        items = [self._item("fine", KIND_PAGE_COMMENT), self._item("scam")]
+        self.assertEqual(len(triage.apply(items)), 2,
+                         "triage orders the digest, it must never filter it")
+
+    def test_sorts_complaints_above_newer_ordinary_comments(self):
+        from datetime import datetime, timezone
+        old_complaint = Item(kind=KIND_AD_COMMENT, id="a", account="x",
+                             created_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                             text="absolute rip off")
+        new_praise = Item(kind=KIND_AD_COMMENT, id="b", account="x",
+                          created_time=datetime(2026, 9, 8, tzinfo=timezone.utc),
+                          text="great work")
+        ar = AccountReport(account=account())
+        ar.results = [CollectionResult(
+            kind=KIND_AD_COMMENT, account="x",
+            items=triage.apply([new_praise, old_complaint]))]
+        self.assertEqual([i.id for i in ar.new_items], ["a", "b"])
+
+
+class TestPriorityOrder(unittest.TestCase):
+    def test_ad_comments_come_first(self):
+        self.assertEqual(KIND_ORDER[0], KIND_AD_COMMENT)
 
 
 class TestState(unittest.TestCase):
@@ -284,7 +387,17 @@ class TestConfig(unittest.TestCase):
     def test_ad_account_gets_act_prefix(self):
         self.path.write_text(
             "accounts:\n  - name: A\n    token_env: T\n    ad_account_id: 123\n")
-        self.assertEqual(load_accounts(self.path)[0].ad_account_id, "act_123")
+        self.assertEqual(load_accounts(self.path)[0].ad_account_ids, ["act_123"])
+
+    def test_accepts_a_list_of_ad_accounts_and_dedups(self):
+        # This business runs ads from several accounts at once.
+        self.path.write_text(
+            "accounts:\n  - name: A\n    token_env: T\n"
+            "    ad_account_ids: [3178575389134669, act_1192428111245965,"
+            " 3178575389134669]\n")
+        self.assertEqual(
+            load_accounts(self.path)[0].ad_account_ids,
+            ["act_3178575389134669", "act_1192428111245965"])
 
     def test_duplicate_slugs_rejected(self):
         self.path.write_text(

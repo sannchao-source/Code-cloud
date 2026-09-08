@@ -1,11 +1,21 @@
-"""Comments on ads, including dark posts.
+"""Comments on ads -- both placements, across every ad account.
 
-This is the surface no publishing tool can see. An ad's creative points at
-a Page post via ``effective_object_story_id``; for a boosted post that is an
-ordinary post, but for a dark post it is one that never appears in the
-Page's feed. Either way the comments hang off that story ID, so the job is
-to walk the ad account's creatives, collect the story IDs, and read the
-comments on each.
+This is the surface no publishing tool can see, and usually the one that
+matters most: a hostile comment sitting under a running ad is shown to
+every future person the ad reaches, so it costs money for as long as it
+stands.
+
+An ad's creative points at the content it runs as. Two IDs matter, and they
+carry *separate* comment threads for the same ad:
+
+  effective_object_story_id     -> the Facebook Page post
+  effective_instagram_media_id  -> the Instagram media
+
+An ad running Advantage+ placements shows on both, so reading only the
+Facebook side silently misses every comment left on Instagram. Dark posts
+behave the same way, except the Page post never appears in the Page feed at
+all -- which is exactly why walking the ad account is the only way to find
+them.
 """
 
 from __future__ import annotations
@@ -20,44 +30,90 @@ log = logging.getLogger(__name__)
 
 AD_LIMIT = 50
 COMMENT_LIMIT = 50
-# Reading comments costs one call per distinct story, so cap the fan-out.
-# Ads share creatives heavily, so this covers far more than 40 ads.
-MAX_STORIES = 40
+# Reading comments costs one call per distinct story. Ads share creatives
+# heavily, so this covers far more than 60 ads.
+MAX_STORIES = 60
 
 
 def collect_ad_comments(client: GraphClient, account, **_) -> CollectionResult:
     result = CollectionResult(kind=KIND_AD_COMMENT, account=account.slug)
-    ad_account_id = account.ad_account_id
-    if not ad_account_id:
-        result.skipped_reason = "no ad_account_id configured"
+    if not account.ad_account_ids:
+        result.skipped_reason = "no ad_account_ids configured"
         return result
 
-    try:
-        ads = list(client.paginate(
-            f"{ad_account_id}/ads",
-            {
-                "fields": "id,name,creative{effective_object_story_id}",
-                # Paused ads keep collecting comments on their post, but
-                # ads that are archived or deleted are not worth the calls.
-                "effective_status": '["ACTIVE","PAUSED"]',
-                "limit": AD_LIMIT,
-            },
-            max_pages=2,
-        ))
-    except GraphError as exc:
-        if exc.is_permission_error:
-            result.skipped_reason = (
-                "ad account unavailable -- the token lacks ads_read, or has no "
-                "access to this ad account")
-            return result
-        result.error = _describe(exc, "listing ads")
+    fb_stories: dict[str, str] = {}
+    ig_media: dict[str, str] = {}
+    problems: list[str] = []
+
+    for ad_account_id in account.ad_account_ids:
+        try:
+            creatives = _creatives_for(client, ad_account_id)
+        except GraphError as exc:
+            if exc.is_permission_error:
+                problems.append(f"{ad_account_id}: no access (needs ads_read)")
+            else:
+                problems.append(f"{ad_account_id}: {exc}")
+            continue
+        _merge_targets(creatives, fb_stories, ig_media)
+
+    if not fb_stories and not ig_media:
+        result.skipped_reason = (
+            "; ".join(problems) if problems else "no ads with attached content")
         return result
 
-    stories = _story_ids(ads)
-    if not stories:
-        return result
+    unreadable = 0
+    unreadable += _read_facebook(client, account, fb_stories, result)
+    unreadable += _read_instagram(client, account, ig_media, result)
 
-    failures = 0
+    if problems:
+        result.skipped_reason = "; ".join(problems)
+    elif unreadable and not result.items:
+        result.skipped_reason = (
+            f"none of the {unreadable} ad post(s) could be read -- most often "
+            "the token is a Page token for a different Page than the ads run "
+            "under, or Instagram comment access is not granted")
+    return result
+
+
+def _creatives_for(client: GraphClient, ad_account_id: str) -> list[dict]:
+    return list(client.paginate(
+        f"{ad_account_id}/ads",
+        {
+            "fields": (
+                "id,name,creative{effective_object_story_id,"
+                "effective_instagram_media_id}"
+            ),
+            # Paused ads keep collecting comments on their post, and those
+            # comments stay visible, so they are still worth reading.
+            # Archived and deleted ads are not.
+            "effective_status": '["ACTIVE","PAUSED"]',
+            "limit": AD_LIMIT,
+        },
+        max_pages=2,
+    ))
+
+
+def _merge_targets(ads: list[dict], fb_stories: dict, ig_media: dict) -> None:
+    """Collect the two content IDs per ad, deduplicated.
+
+    Several ads routinely share one creative, and the comments live on the
+    content rather than the ad. Deduplicating here keeps the call count down
+    and stops one comment being reported once per ad that runs it.
+    """
+    for ad in ads:
+        creative = ad.get("creative") or {}
+        name = ad.get("name") or ""
+        story_id = creative.get("effective_object_story_id")
+        if story_id and story_id not in fb_stories:
+            fb_stories[story_id] = name
+        media_id = creative.get("effective_instagram_media_id")
+        if media_id and media_id not in ig_media:
+            ig_media[media_id] = name
+
+
+def _read_facebook(client, account, stories: dict[str, str],
+                   result: CollectionResult) -> int:
+    unreadable = 0
     for story_id, ad_name in list(stories.items())[:MAX_STORIES]:
         try:
             comments = list(client.paginate(
@@ -70,10 +126,10 @@ def collect_ad_comments(client: GraphClient, account, **_) -> CollectionResult:
                 max_pages=1,
             ))
         except GraphError as exc:
-            # A single unreadable story should not sink the whole collector;
-            # creatives referencing another Page's post are a normal case.
-            failures += 1
-            log.debug("skipping comments for story %s: %s", story_id, exc)
+            # One unreadable story must not sink the collector; a creative
+            # referencing another Page's post is a normal case.
+            unreadable += 1
+            log.debug("skipping FB comments for %s: %s", story_id, exc)
             continue
 
         for comment in comments:
@@ -85,27 +141,42 @@ def collect_ad_comments(client: GraphClient, account, **_) -> CollectionResult:
                 author=(comment.get("from") or {}).get("name") or "unknown",
                 text=comment.get("message") or "",
                 permalink=comment.get("permalink_url") or "",
-                context=f"on ad: {_summarise(ad_name, story_id)}",
-                extra={"story_id": story_id, "is_reply": bool(comment.get("parent"))},
+                context=f"Facebook ad: {_summarise(ad_name, story_id)}",
+                extra={
+                    "placement": "facebook",
+                    "story_id": story_id,
+                    "is_reply": bool(comment.get("parent")),
+                },
             ))
-
-    if failures and not result.items:
-        result.skipped_reason = (
-            f"none of the {failures} ad post(s) could be read -- most often the "
-            "token is a Page token for a different Page than the ads run under")
-    return result
+    return unreadable
 
 
-def _story_ids(ads: list[dict]) -> dict[str, str]:
-    """Map story ID -> a representative ad name.
+def _read_instagram(client, account, media: dict[str, str],
+                    result: CollectionResult) -> int:
+    unreadable = 0
+    for media_id, ad_name in list(media.items())[:MAX_STORIES]:
+        try:
+            comments = list(client.paginate(
+                f"{media_id}/comments",
+                {"fields": "id,text,username,timestamp", "limit": COMMENT_LIMIT},
+                max_pages=1,
+            ))
+        except GraphError as exc:
+            unreadable += 1
+            log.debug("skipping IG comments for %s: %s", media_id, exc)
+            continue
 
-    Several ads routinely share one creative, and the comments live on the
-    post, not the ad. Deduplicating here is what keeps the call count down
-    and stops the same comment being reported once per ad.
-    """
-    stories: dict[str, str] = {}
-    for ad in ads:
-        story_id = (ad.get("creative") or {}).get("effective_object_story_id")
-        if story_id and story_id not in stories:
-            stories[story_id] = ad.get("name") or ""
-    return stories
+        for comment in comments:
+            username = comment.get("username")
+            result.items.append(Item(
+                kind=KIND_AD_COMMENT,
+                id=str(comment.get("id")),
+                account=account.slug,
+                created_time=parse_time(comment.get("timestamp")),
+                author=f"@{username}" if username else "unknown",
+                text=comment.get("text") or "",
+                permalink="",
+                context=f"Instagram ad: {_summarise(ad_name, media_id)}",
+                extra={"placement": "instagram", "media_id": media_id},
+            ))
+    return unreadable

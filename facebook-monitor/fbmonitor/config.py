@@ -23,7 +23,10 @@ class Account:
     token_env: str
     facebook_page_id: str | None = None
     instagram_user_id: str | None = None
-    ad_account_id: str | None = None
+    # A business commonly runs ads from several accounts (an in-house one
+    # plus an agency's). Comments land on the Page post either way, so all
+    # of them have to be walked.
+    ad_account_ids: list[str] = field(default_factory=list)
     # Per-account opt-out, for a business where (say) nobody reads the
     # Instagram DMs and the noise is not wanted.
     disabled_sources: list[str] = field(default_factory=list)
@@ -80,16 +83,12 @@ def _build(entry: dict, index: int, path: Path) -> Account:
 
     page_id = _as_id(entry.get("facebook_page_id"))
     ig_id = _as_id(entry.get("instagram_user_id"))
-    ad_id = _as_id(entry.get("ad_account_id"))
+    ad_ids = _ad_account_ids(entry, name)
 
-    if not any([page_id, ig_id, ad_id]):
+    if not any([page_id, ig_id, ad_ids]):
         raise ConfigError(
             f"account '{name}' needs at least one of facebook_page_id, "
-            "instagram_user_id or ad_account_id")
-
-    # Graph wants ad accounts prefixed; accept either form in config.
-    if ad_id and not ad_id.startswith("act_"):
-        ad_id = f"act_{ad_id}"
+            "instagram_user_id or ad_account_ids")
 
     disabled = entry.get("disabled_sources") or []
     if not isinstance(disabled, list):
@@ -101,9 +100,32 @@ def _build(entry: dict, index: int, path: Path) -> Account:
         token_env=token_env,
         facebook_page_id=page_id,
         instagram_user_id=ig_id,
-        ad_account_id=ad_id,
+        ad_account_ids=ad_ids,
         disabled_sources=[str(d) for d in disabled],
     )
+
+
+def _ad_account_ids(entry: dict, name: str) -> list[str]:
+    """Accept either a single ad_account_id or a list of ad_account_ids."""
+    raw = entry.get("ad_account_ids")
+    if raw is None:
+        raw = entry.get("ad_account_id")
+    if raw is None or raw == "":
+        return []
+    values = raw if isinstance(raw, list) else [raw]
+    out: list[str] = []
+    for value in values:
+        ad_id = _as_id(value)
+        if not ad_id:
+            continue
+        # Graph wants ad accounts prefixed; accept either form in config.
+        if not ad_id.startswith("act_"):
+            ad_id = f"act_{ad_id}"
+        if ad_id not in out:
+            out.append(ad_id)
+    if not out:
+        raise ConfigError(f"account '{name}': ad_account_ids is empty")
+    return out
 
 
 def _as_id(value) -> str | None:

@@ -23,12 +23,15 @@ KIND_PAGE_COMMENT = "page_comment"
 KIND_AD_COMMENT = "ad_comment"
 KIND_INSTAGRAM_COMMENT = "instagram_comment"
 
+# Ad comments lead. Everything else is seen by whoever happens to visit;
+# a comment under a running ad is served to every future person the ad
+# reaches, so it costs money for as long as it stands.
 KIND_ORDER = [
+    KIND_AD_COMMENT,
     KIND_MESSENGER_DM,
     KIND_INSTAGRAM_DM,
     KIND_REVIEW,
     KIND_VISITOR_POST,
-    KIND_AD_COMMENT,
     KIND_PAGE_COMMENT,
     KIND_INSTAGRAM_COMMENT,
 ]
@@ -58,7 +61,15 @@ class Item:
     # Where this turned up -- the post it is a comment on, the conversation
     # a message belongs to. Gives the digest a line of context.
     context: str = ""
+    # Set by fbmonitor.triage. A hint for ordering the digest, never a
+    # filter -- see that module.
+    severity: int = 0
+    attention_reason: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.severity > 0
 
     @property
     def sort_key(self) -> datetime:
@@ -69,6 +80,7 @@ class Item:
         out["created_time"] = (
             self.created_time.isoformat() if self.created_time else None
         )
+        out["needs_attention"] = self.needs_attention
         return out
 
 
