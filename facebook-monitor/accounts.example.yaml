@@ -1,0 +1,27 @@
+# Copy to accounts.yaml and fill in. No tokens live in this file — each
+# account names an environment variable, read at run time.
+#
+# Find the IDs with:
+#   GET /me/accounts?fields=id,name,instagram_business_account
+#   GET /me/adaccounts?fields=id,name
+
+accounts:
+  - name: Republic of Barbers
+    slug: republic-of-barbers
+    token_env: ROB_PAGE_TOKEN
+    facebook_page_id: "106828815133188"
+    # instagram_user_id: "<from instagram_business_account above>"
+    # ad_account_id: "act_<your ad account id>"
+
+  - name: Raising Thinkers
+    slug: raising-thinkers
+    token_env: RAISING_THINKERS_PAGE_TOKEN
+    # facebook_page_id: "<page id>"
+    # instagram_user_id: "<instagram professional account id>"
+    # ad_account_id: "act_<ad account id>"
+
+    # Sources you do not want reported for this account. One or more of:
+    # messenger_dm, instagram_dm, review, visitor_post, ad_comment,
+    # page_comment, instagram_comment
+    # disabled_sources:
+    #   - instagram_dm
