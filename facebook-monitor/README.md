@@ -47,6 +47,30 @@ is always shown. Treat a `‼` as "look here first" and its absence as no
 information at all; tune the word lists to how your customers actually
 complain.
 
+### Verified account map
+
+Every ad account was checked for which Page it actually promotes, rather
+than inferred from its name — two names are misleading:
+
+| Ad account | Promotes | State |
+|---|---|---|
+| `3178575389134669` Republic Of Barbers | Republic of Barbers | live |
+| `1192428111245965` Rob Barbers | **Republic of Barbers + Fitfable** | live |
+| `548901053966634` SC - Marketing | **Raising Thinkers** | live |
+| `886036749311933` ROB Marketing Agency | **Fitfable** | live |
+| `909159656936045` SC1 - Marketing Agency | — | no ads ever |
+| `724406129355682` SC2 - Marketing Agency | — | no ads ever |
+| `3510831575863044` RC - Agency | — | no ads ever |
+| `1216084909005293` RC - Marketing 2 | — | no ads ever |
+| `721934336045857` SC3 - Marketing Agency | unknown | not checkable |
+| `869845057383261` Richard Marketing | unknown | account UNSETTLED |
+
+`Rob Barbers` promotes two Pages at once, so it is listed under both
+businesses in `accounts.example.yaml`. Each run reads only the posts its own
+Page token can see and skips the rest — partial success is not treated as a
+failure. The four dormant accounts are left out; the two unverifiable ones
+may need adding.
+
 ### One ad has two comment threads
 
 An ad running Advantage+ placements appears on both Facebook and Instagram,
@@ -177,4 +201,4 @@ minutes sits well inside the rate limits for a couple of Pages.
 python3 -m unittest discover -s tests -v
 ```
 
-41 tests, no network — Graph is faked at the client seam.
+42 tests, no network — Graph is faked at the client seam.

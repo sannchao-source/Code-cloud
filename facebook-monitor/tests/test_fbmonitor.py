@@ -256,6 +256,48 @@ class TestAdComments(unittest.TestCase):
         self.assertIn("could be read", result.skipped_reason)
 
 
+class TestAdAccountSharedBetweenPages(unittest.TestCase):
+    """One ad account can promote two Pages at once.
+
+    Comments live on the Page post behind each ad, so a run using one
+    business's Page token must pick up its own Page's ads from the shared
+    account and quietly skip the other Page's, rather than failing.
+    """
+
+    def _graph(self):
+        return FakeGraph(
+            {
+                "act_shared/ads": {"data": [
+                    {"id": "a1", "name": "Barbers ad", "creative": {
+                        "effective_object_story_id": "100_1"}},
+                    {"id": "a2", "name": "Fitfable ad", "creative": {
+                        "effective_object_story_id": "200_1"}},
+                ]},
+                "100_1/comments": {"data": [{
+                    "id": "c_rob", "message": "how much?",
+                    "from": {"name": "A"},
+                    "created_time": "2026-09-08T08:00:00+0000"}]},
+                "200_1/comments": {"data": [{
+                    "id": "c_fit", "message": "love this",
+                    "from": {"name": "B"},
+                    "created_time": "2026-09-08T08:00:00+0000"}]},
+            },
+            # The other Page's post is invisible to this token.
+            errors={"200_1/comments": GraphError("not visible", code=100)},
+        )
+
+    def test_reads_only_its_own_pages_ads(self):
+        result = collect_ad_comments(
+            self._graph(),
+            account(slug="rob", facebook_page_id="100",
+                    ad_account_ids=["act_shared"]))
+        self.assertEqual([i.id for i in result.items], ["c_rob"])
+        # Partial success must not be reported as a failure -- the other
+        # Page's ads being unreadable here is expected, not a fault.
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.skipped_reason)
+
+
 class TestTriage(unittest.TestCase):
     def _item(self, text, kind=KIND_AD_COMMENT):
         return Item(kind=kind, id="x", account="a", created_time=None, text=text)

@@ -1,45 +1,59 @@
-# Copy to accounts.yaml and fill in. No tokens live in this file — each
-# account names an environment variable, read at run time.
+# Copy to accounts.yaml and fill in the token_env names. No tokens live in
+# this file — each account names an environment variable, read at run time.
 #
-# Ad account IDs below were discovered from your Meta ads access. Comments
-# on an ad land on the Page post behind it, so the token for an account
-# must be a Page token for the Page those ads run under.
+# The IDs below were verified against your Meta ads access: each ad account
+# was checked for which Page it actually promotes, rather than inferred from
+# its name. Two names are misleading, so do not go by them:
+#   "ROB Marketing Agency" advertises Fitfable, not Republic of Barbers.
+#   "Rob Barbers" advertises both Republic of Barbers and Fitfable.
+#
+# Comments on an ad live on the Page post behind it, so an account's token
+# must be a Page token for that Page. An ad account promoting two Pages is
+# listed under both businesses: each run reads only the posts its own token
+# can see, and skips the rest.
 
 accounts:
   - name: Republic of Barbers
     slug: republic-of-barbers
     token_env: ROB_PAGE_TOKEN
     facebook_page_id: "106828815133188"
-    # instagram_user_id: "<from me/accounts?fields=instagram_business_account>"
-
-    # Every ad account seen running ads for this Page. Confirmed live:
-    #   3178575389134669  Republic Of Barbers   (Fresha/website service ads)
-    #   1192428111245965  Rob Barbers           (boosted FB + IG posts)
-    # The rest are agency accounts under the same business — drop any that
-    # do not advertise this Page.
+    # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
     ad_account_ids:
-      - "3178575389134669"
-      - "1192428111245965"
-      - "909159656936045"   # SC1 - Marketing Agency
-      - "548901053966634"   # SC - Marketing
-      - "724406129355682"   # SC2 - Marketing Agency
-      - "721934336045857"   # SC3 - Marketing Agency
-      - "886036749311933"   # ROB Marketing Agency
+      - "3178575389134669"   # Republic Of Barbers — live (Fresha service ads)
+      - "1192428111245965"   # Rob Barbers — live (also runs Fitfable ads)
 
-  # A separate business, under the Richards Marketing umbrella. Fill in its
-  # Page ID and add whichever ad accounts advertise that Page.
-  # - name: Raising Thinkers
-  #   slug: raising-thinkers
-  #   token_env: RAISING_THINKERS_PAGE_TOKEN
-  #   facebook_page_id: "<page id>"
-  #   instagram_user_id: "<instagram professional account id>"
-  #   ad_account_ids:
-  #     - "3510831575863044"   # RC - Agency
-  #     - "1216084909005293"   # RC - Marketing 2
-  #     - "869845057383261"    # Richard Marketing (account is UNSETTLED)
+  - name: Raising Thinkers
+    slug: raising-thinkers
+    token_env: RAISING_THINKERS_PAGE_TOKEN
+    facebook_page_id: "1059125853953466"
+    # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
+    ad_account_ids:
+      - "548901053966634"    # SC - Marketing — live (Vid/Image campaign)
 
-    # Sources you do not want reported. One or more of:
-    # ad_comment, messenger_dm, instagram_dm, review, visitor_post,
-    # page_comment, instagram_comment
-    # disabled_sources:
-    #   - instagram_dm
+  # Turned up during the ad-account sweep and running ads. Remove this block
+  # if you do not want it monitored.
+  - name: Fitfable
+    slug: fitfable
+    token_env: FITFABLE_PAGE_TOKEN
+    facebook_page_id: "117731341219971"
+    ad_account_ids:
+      - "886036749311933"    # ROB Marketing Agency — live
+      - "1192428111245965"   # Rob Barbers — shared with Republic of Barbers
+
+# Ad accounts deliberately left out, all confirmed to have never run an ad:
+#   909159656936045  SC1 - Marketing Agency
+#   724406129355682  SC2 - Marketing Agency
+#   3510831575863044 RC - Agency
+#   1216084909005293 RC - Marketing 2
+#
+# Two could not be checked and may need adding:
+#   721934336045857  SC3 - Marketing Agency  (not enabled for the Ads MCP)
+#   869845057383261  Richard Marketing       (account status UNSETTLED)
+#
+# One Page has no ad account promoting it, so it is not listed above:
+#   107819122193620  Solutions Engineering Team
+#
+# Per-account opt-outs. One or more of: ad_comment, messenger_dm,
+# instagram_dm, review, visitor_post, page_comment, instagram_comment
+#   disabled_sources:
+#     - instagram_dm
