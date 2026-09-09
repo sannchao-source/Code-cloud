@@ -318,6 +318,16 @@ Get-Content .\digest.txt -Tail 40                      # recent digests
 The task is set `-StartWhenAvailable`, so a run missed while the machine was
 off happens on return rather than being skipped.
 
+It also runs **hidden**. A task registered against the interactive user
+flashes a console window every run — on a machine someone actually sits at,
+that is visual noise every fifteen minutes forever, and the sort of thing
+that gets a monitor disabled. The task therefore uses an `S4U` principal
+("run whether the user is logged on or not", no stored password), which
+executes in a non-interactive session so nothing appears. That also keeps
+checks running while the machine sits at the login screen. Where a policy
+forbids `S4U`, the installer says so and falls back to a visible task rather
+than failing.
+
 ### Getting the digest to a human
 
 A digest on a machine nobody logs into is not a monitor. With `--notify`

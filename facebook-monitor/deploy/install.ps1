@@ -45,12 +45,24 @@ if (Test-Path $envFile) {
     Write-Host "==> locked down .env to $me"
 }
 
-# Register the task. Run whether or not the user is logged in, so a NUC
-# sitting at the login screen still checks.
+# Register the task.
+#
+# -WindowStyle Hidden alone is not enough: a task registered against the
+# interactive user still flashes a console window on screen every run,
+# which on a machine someone actually uses is fifteen-minute visual noise
+# forever. The principal below is what actually fixes it -- S4U means "run
+# whether the user is logged on or not" without storing a password, so the
+# task runs in a non-interactive session and nothing appears at all. It
+# also means checks continue while the NUC sits at the login screen.
 $runner = Join-Path $AppDir "deploy\run.ps1"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" `
+    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`"" `
     -WorkingDirectory $AppDir
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    -LogonType S4U `
+    -RunLevel Limited
 
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
@@ -67,11 +79,22 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Write-Host "==> replaced the existing task"
 }
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-    -Settings $settings -Description "Check Facebook for new ad comments, comments and messages" `
-    -RunLevel Limited | Out-Null
-
-Write-Host "==> scheduled every $IntervalMinutes minutes"
+try {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+        -Settings $settings -Principal $principal `
+        -Description "Check Facebook for new ad comments and comments" | Out-Null
+    Write-Host "==> scheduled every $IntervalMinutes minutes (runs hidden)"
+} catch {
+    # S4U needs "Log on as a batch job" rights, which a locked-down domain
+    # policy can withhold. Falling back keeps the monitor working; it just
+    # shows a window each run.
+    Write-Warning "could not register a hidden task ($($_.Exception.Message))"
+    Write-Warning "falling back to an interactive task -- a window will appear each run"
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+        -Settings $settings -RunLevel Limited `
+        -Description "Check Facebook for new ad comments and comments" | Out-Null
+    Write-Host "==> scheduled every $IntervalMinutes minutes (visible)"
+}
 Write-Host ""
 Write-Host "Run it now:     Start-ScheduledTask -TaskName $TaskName"
 Write-Host "Check it:       Get-ScheduledTask -TaskName $TaskName | Get-ScheduledTaskInfo"
