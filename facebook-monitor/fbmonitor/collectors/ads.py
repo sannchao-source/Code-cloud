@@ -35,8 +35,21 @@ COMMENT_LIMIT = 50
 MAX_STORIES = 60
 
 
-def collect_ad_comments(client: GraphClient, account, **_) -> CollectionResult:
+def collect_ad_comments(client: GraphClient, account, page_client=None,
+                        **_) -> CollectionResult:
+    """Two tokens, because the two halves need different ones.
+
+    Listing an ad account needs ads_read, which is a user-level permission.
+    Reading the comments on the Page post behind an ad needs Page-level
+    access. Using the user token for both looked like it worked, because
+    Instagram comments do come back on a user token -- so the only ad
+    comment that surfaced was an Instagram one, while every Facebook ad
+    post failed.
+    """
     result = CollectionResult(kind=KIND_AD_COMMENT, account=account.slug)
+    # Fall back to the ads client only so a caller that passes one client
+    # still functions; the monitor always passes both.
+    reader = page_client or client
     if not account.ad_account_ids:
         result.skipped_reason = "no ad_account_ids configured"
         return result
@@ -61,18 +74,44 @@ def collect_ad_comments(client: GraphClient, account, **_) -> CollectionResult:
             "; ".join(problems) if problems else "no ads with attached content")
         return result
 
-    unreadable = 0
-    unreadable += _read_facebook(client, account, fb_stories, result)
-    unreadable += _read_instagram(client, account, ig_media, result)
+    # An ad account can promote more than one Page. A story ID is
+    # "{page_id}_{post_id}", so posts belonging to another Page can be
+    # identified and skipped before spending a call on them -- and, more
+    # importantly, their absence is expected rather than a fault worth
+    # reporting on every run forever.
+    ours, theirs = _split_by_page(fb_stories, account.facebook_page_id)
 
-    if problems:
-        result.skipped_reason = "; ".join(problems)
-    elif unreadable and not result.items:
-        result.skipped_reason = (
-            f"none of the {unreadable} ad post(s) could be read -- most often "
-            "the token is a Page token for a different Page than the ads run "
-            "under, or Instagram comment access is not granted")
+    fb_unreadable = _read_facebook(reader, account, ours, result)
+    ig_unreadable = _read_instagram(reader, account, ig_media, result)
+
+    # A partial failure must be reported even when some comments did come
+    # back. Reporting "3 new" while silently failing on 20 other ad posts
+    # reads identically to "you have 3 comments", which is precisely the
+    # false reassurance this tool exists to prevent.
+    notes = list(problems)
+    if fb_unreadable:
+        notes.append(
+            f"{fb_unreadable} of {len(ours)} Facebook ad post(s) on this Page "
+            "could not be read")
+    if ig_unreadable and not any(
+            i.extra.get("placement") == "instagram" for i in result.items):
+        notes.append(
+            f"none of the {ig_unreadable} Instagram ad post(s) could be read "
+            "-- Instagram comment access may not be granted")
+    if theirs:
+        log.debug("skipped %d ad post(s) belonging to another Page", theirs)
+    if notes:
+        result.skipped_reason = "; ".join(notes)
     return result
+
+
+def _split_by_page(stories: dict[str, str], page_id: str | None):
+    """Keep the stories on our own Page; count the rest without reading them."""
+    if not page_id:
+        return stories, 0
+    ours = {sid: name for sid, name in stories.items()
+            if sid.split("_", 1)[0] == str(page_id)}
+    return ours, len(stories) - len(ours)
 
 
 def _creatives_for(client: GraphClient, ad_account_id: str) -> list[dict]:

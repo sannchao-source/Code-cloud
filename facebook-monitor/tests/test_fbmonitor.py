@@ -252,9 +252,89 @@ class TestAdComments(unittest.TestCase):
                 "creative": {"effective_object_story_id": "100_777"}}]}},
             errors={"100_777/comments": GraphError("nope", code=100)},
         )
-        result = collect_ad_comments(graph, account())
+        result = collect_ad_comments(graph, account(facebook_page_id="100"))
         self.assertTrue(result.ok)
-        self.assertIn("could be read", result.skipped_reason)
+        self.assertIn("could not be read", result.skipped_reason)
+
+
+class TestPartialAdFailureIsReported(unittest.TestCase):
+    """Some comments arriving must not mask the rest failing.
+
+    The live run returned one Instagram ad comment and reported no problem,
+    while every Facebook ad post had in fact failed to read. "1 new comment"
+    is indistinguishable from "you have 1 comment" -- exactly the false
+    reassurance this tool exists to prevent.
+    """
+
+    def test_reports_failures_even_when_some_comments_came_back(self):
+        graph = FakeGraph(
+            {
+                "act_300/ads": {"data": [
+                    {"id": "a1", "name": "A", "creative": {
+                        "effective_object_story_id": "100_1"}},
+                    {"id": "a2", "name": "B", "creative": {
+                        "effective_object_story_id": "100_2"}},
+                ]},
+                "100_1/comments": {"data": [{
+                    "id": "ok", "message": "nice", "from": {"name": "X"},
+                    "created_time": "2026-09-09T08:00:00+0000"}]},
+            },
+            errors={"100_2/comments": GraphError("nope", code=100)},
+        )
+        result = collect_ad_comments(graph, account(facebook_page_id="100"))
+        self.assertEqual(len(result.items), 1)
+        self.assertIsNotNone(result.skipped_reason,
+                             "a silent partial failure is the whole problem")
+        self.assertIn("1 of 2", result.skipped_reason)
+
+    def test_uses_the_page_token_to_read_comments_not_the_ads_token(self):
+        # Listing an ad account needs the user token (ads_read); reading the
+        # comments on the Page post behind an ad needs the Page token. Using
+        # the ads token for both meant only Instagram comments came back.
+        used = []
+
+        class Recording(FakeGraph):
+            def __init__(self, responses, label):
+                super().__init__(responses)
+                self.label = label
+
+            def paginate(self, path, params=None, *, max_pages=10):
+                used.append((self.label, path))
+                return super().paginate(path, params, max_pages=max_pages)
+
+        ads_client = Recording(
+            {"act_300/ads": {"data": [{"id": "a1", "name": "A", "creative": {
+                "effective_object_story_id": "100_1"}}]}}, "ads")
+        page_client = Recording(
+            {"100_1/comments": {"data": [{
+                "id": "c1", "message": "hi", "from": {"name": "X"},
+                "created_time": "2026-09-09T08:00:00+0000"}]}}, "page")
+
+        result = collect_ad_comments(
+            ads_client, account(facebook_page_id="100"),
+            page_client=page_client)
+
+        self.assertEqual([i.id for i in result.items], ["c1"])
+        self.assertIn(("ads", "act_300/ads"), used)
+        self.assertIn(("page", "100_1/comments"), used)
+
+    def test_other_pages_ads_are_skipped_without_a_call_or_a_warning(self):
+        graph = FakeGraph({
+            "act_300/ads": {"data": [
+                {"id": "a1", "name": "Ours", "creative": {
+                    "effective_object_story_id": "100_1"}},
+                {"id": "a2", "name": "Theirs", "creative": {
+                    "effective_object_story_id": "999_1"}},
+            ]},
+            "100_1/comments": {"data": [{
+                "id": "c1", "message": "hi", "from": {"name": "X"},
+                "created_time": "2026-09-09T08:00:00+0000"}]},
+        })
+        result = collect_ad_comments(graph, account(facebook_page_id="100"))
+        self.assertEqual([i.id for i in result.items], ["c1"])
+        # Never even attempted, so no wasted call and no standing warning.
+        self.assertNotIn("999_1/comments", graph.calls)
+        self.assertIsNone(result.skipped_reason)
 
 
 class TestAdAccountSharedBetweenPages(unittest.TestCase):
