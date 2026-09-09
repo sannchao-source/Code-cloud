@@ -250,6 +250,12 @@ Exit codes: `0` clean, `1` something could not be checked (bad token,
 missing scope), `2` config error. A scheduled run can key off `1` so a
 broken token surfaces instead of looking like a quiet day.
 
+For that to mean anything, a source that can *never* work should be
+disabled rather than left to report "not checked" every run — otherwise the
+exit code sits at `1` permanently and stops distinguishing a healthy run
+from a broken one. On Windows this is what `LastTaskResult` shows, so it is
+the only health signal the scheduler gives you.
+
 ### Scheduling
 
 #### On an always-on Linux box (the NUC)

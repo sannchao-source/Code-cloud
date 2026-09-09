@@ -33,6 +33,14 @@ accounts:
     disabled_sources:
       - messenger_dm
       - instagram_dm
+      # Instagram post comments are off because they cannot work: Meta's
+      # current app model did not offer instagram_basic, without which the
+      # Page's Instagram account cannot even be resolved. Left enabled it
+      # reported "not checked" on every run, which pinned the process exit
+      # code to 1 permanently -- and an exit code that never changes is no
+      # longer a health signal. Re-enable if instagram_basic is ever
+      # granted; Instagram comments on ADS are unaffected and still read.
+      - instagram_comment
 
 
   - name: Raising Thinkers
@@ -52,6 +60,14 @@ accounts:
     disabled_sources:
       - messenger_dm
       - instagram_dm
+      # Instagram post comments are off because they cannot work: Meta's
+      # current app model did not offer instagram_basic, without which the
+      # Page's Instagram account cannot even be resolved. Left enabled it
+      # reported "not checked" on every run, which pinned the process exit
+      # code to 1 permanently -- and an exit code that never changes is no
+      # longer a health signal. Re-enable if instagram_basic is ever
+      # granted; Instagram comments on ADS are unaffected and still read.
+      - instagram_comment
 
 
 # Notes on what is deliberately not here:
