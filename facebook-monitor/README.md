@@ -49,29 +49,34 @@ complain.
 
 ### Verified account map
 
-Every ad account was checked for which Page it actually promotes, rather
-than inferred from its name — two names are misleading:
+Two businesses are in scope, and both Pages sit in the **Republic Of
+Barbers** business portfolio (`835665240453786`), so a single Meta app
+connected to that portfolio covers both:
 
-| Ad account | Promotes | State |
+| Page | ID |
+|---|---|
+| Republic of Barbers est 2021 | `106828815133188` |
+| Raising Thinkers | `1059125853953466` |
+
+Every ad account was checked for which Page it actually promotes, rather
+than inferred from its name — two names are actively misleading:
+
+| Ad account | Promotes | In scope |
 |---|---|---|
-| `3178575389134669` Republic Of Barbers | Republic of Barbers | live |
-| `1192428111245965` Rob Barbers | **Republic of Barbers + Fitfable** | live |
-| `548901053966634` SC - Marketing | **Raising Thinkers** | live |
-| `886036749311933` ROB Marketing Agency | **Fitfable** | live |
-| `909159656936045` SC1 - Marketing Agency | — | no ads ever |
-| `724406129355682` SC2 - Marketing Agency | — | no ads ever |
-| `3510831575863044` RC - Agency | — | no ads ever |
-| `1216084909005293` RC - Marketing 2 | — | no ads ever |
+| `3178575389134669` Republic Of Barbers | Republic of Barbers | yes |
+| `1192428111245965` Rob Barbers | Republic of Barbers + one out-of-scope Page | yes |
+| `548901053966634` SC - Marketing | **Raising Thinkers** | yes |
+| `886036749311933` ROB Marketing Agency | **Fitfable** — a different business | no |
+| SC1, SC2, RC - Agency, RC - Marketing 2 | — | no ads ever |
 | `721934336045857` SC3 - Marketing Agency | unknown | not checkable |
 | `869845057383261` Richard Marketing | unknown | account UNSETTLED |
 
-`Rob Barbers` promotes two Pages at once, so it is listed under both
-businesses in `accounts.example.yaml`. Each run reads only the posts its own
-Page token can see and skips the rest — partial success is not treated as a
-failure. The four dormant accounts are left out; the two unverifiable ones
-may need adding.
+`Rob Barbers` promotes a second Page outside this scope. Those ads' comments
+are skipped rather than erroring: a Page token cannot read another Page's
+posts, and a partial read is not treated as a failure. The four dormant
+accounts are excluded so they do not cost calls on every run.
 
-### One ad has two comment threads
+### One ad has two comment threads### One ad has two comment threads
 
 An ad running Advantage+ placements appears on both Facebook and Instagram,
 and each carries a **separate** thread. Reading only the Facebook side
