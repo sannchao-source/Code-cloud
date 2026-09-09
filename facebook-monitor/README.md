@@ -235,14 +235,55 @@ broken token surfaces instead of looking like a quiet day.
 
 ### Scheduling
 
+#### On an always-on Linux box (the NUC)
+
+```bash
+git clone <this repo> && cd facebook-monitor
+cp accounts.example.yaml accounts.yaml   # fill in
+cp .env.example .env                     # add the Page tokens
+sudo ./deploy/install.sh
+```
+
+That creates a virtualenv, installs dependencies, locks `.env` to 0600, and
+enables a systemd timer that runs every 15 minutes. It is safe to re-run to
+pick up changes.
+
+```bash
+systemctl list-timers fbmonitor.timer          # when it next runs
+sudo systemctl start fbmonitor.service         # run it right now
+journalctl -u fbmonitor.service -n 50          # history of runs
+cat digest.txt                                 # the digests themselves
+```
+
+The timer uses `Persistent=true`, so if the box is off or asleep at a
+scheduled tick it runs as soon as it is back rather than skipping that
+window. The service is sandboxed (`ProtectSystem=strict`, `ProtectHome`,
+`NoNewPrivileges`) because it only ever reads a remote API and writes two
+files of its own.
+
+#### Plain cron, or a non-systemd box
+
 ```cron
 */15 * * * * cd /path/to/facebook-monitor && \
   set -a && . ./.env && set +a && \
-  /usr/bin/python3 -m fbmonitor >> digest.log 2>&1
+  ./.venv/bin/python -m fbmonitor >> digest.txt 2>&1
 ```
 
-Graph has no webhook in this design, so monitoring means polling. Every 15
-minutes sits well inside the rate limits for a couple of Pages.
+#### On Windows
+
+Task Scheduler, running `.venv\Scripts\python.exe -m fbmonitor` every 15
+minutes, with the working directory set to the checkout. Load the tokens as
+user environment variables rather than from `.env`, or use a wrapper `.bat`
+that sets them.
+
+#### How often
+
+Every 15 minutes is the gap between a hostile comment appearing under a
+live ad and you seeing it, and it sits well inside the rate limits for a
+couple of Pages. Trim it if that is too slow. Below roughly five minutes,
+a Page webhook subscription is the better instrument — but that needs the
+app published and a public HTTPS endpoint, which is a different piece of
+work than a timer.
 
 ## Notes
 
