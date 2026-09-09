@@ -10,7 +10,7 @@ from .config import Account
 from .graph import GraphClient
 from .models import KIND_AD_COMMENT, KIND_ORDER, CollectionResult, Item
 from .state import State
-from . import triage
+from . import tokens, triage
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,9 @@ class AccountReport:
 @dataclass
 class Report:
     accounts: list[AccountReport] = field(default_factory=list)
+    # Conditions that are not about any one source -- currently a token
+    # approaching expiry, which would otherwise fail silently.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def total_new(self) -> int:
@@ -67,7 +70,8 @@ class Report:
 
     @property
     def has_problems(self) -> bool:
-        return any(a.fatal or a.problems for a in self.accounts)
+        return bool(self.warnings) or any(
+            a.fatal or a.problems for a in self.accounts)
 
 
 def run(
@@ -77,6 +81,7 @@ def run(
     sources: list[str] | None = None,
     api_version: str | None = None,
     record: bool = True,
+    token_checker=None,
 ) -> Report:
     """Collect new items for every account.
 
@@ -144,4 +149,41 @@ def run(
 
             account_report.results.append(result)
 
+    _check_tokens(report, accounts, state, api_version, record=record,
+                  checker=token_checker or tokens.check)
     return report
+
+
+def _check_tokens(report, accounts, state, api_version, *, record: bool,
+                  checker) -> None:
+    """Warn before the ads token dies, not after.
+
+    Its expiry is silent: ad comments simply stop being reported and the
+    channel stays quiet, which is what this tool uses to mean "nothing
+    wrong". Checked once a day, since the answer moves in weeks.
+    """
+    if not state.due_for_token_check(tokens.CHECK_EVERY_HOURS):
+        # Re-raise the last answer so the warning persists between checks.
+        existing = state.token_warning()
+        if existing:
+            report.warnings.append(existing)
+        return
+
+    seen: set[str] = set()
+    warnings: list[str] = []
+    kwargs = {"api_version": api_version} if api_version else {}
+    for account in accounts:
+        ads_token = account.ads_token
+        # One token usually serves every account; only inspect it once.
+        if not ads_token or ads_token in seen:
+            continue
+        seen.add(ads_token)
+        warning = checker(
+            GraphClient(ads_token, **kwargs), ads_token,
+            label=f"ads token ({account.ads_token_env})")
+        if warning:
+            warnings.append(warning)
+
+    report.warnings.extend(warnings)
+    if record:
+        state.mark_token_checked("; ".join(warnings) if warnings else None)

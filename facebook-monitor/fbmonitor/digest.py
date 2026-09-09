@@ -18,6 +18,9 @@ def render_text(report: Report, *, width: int = 78) -> str:
     lines.append(f"Facebook / Instagram inbox — {stamp}")
     lines.append("=" * width)
 
+    for warning in report.warnings:
+        lines.append(f"⏳ {warning}")
+
     if report.total_complaints:
         lines.append(
             f"‼  {report.total_complaints} possible complaint(s) — these are "
@@ -114,6 +117,7 @@ def render_json(report: Report) -> str:
         "total_new": report.total_new,
         "total_flagged": report.total_flagged,
         "total_complaints": report.total_complaints,
+        "warnings": report.warnings,
         "accounts": [
             {
                 "name": ar.account.name,

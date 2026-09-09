@@ -7,7 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -22,7 +22,7 @@ from fbmonitor.collectors.instagram import collect_instagram_comments
 from fbmonitor.config import Account, ConfigError, load_accounts
 from fbmonitor.digest import render_json, render_text
 from fbmonitor.graph import GraphClient, GraphError
-from fbmonitor import notify, triage
+from fbmonitor import notify, tokens, triage
 from fbmonitor.models import (KIND_AD_COMMENT, KIND_ORDER,
                              KIND_PAGE_COMMENT, Item, parse_time)
 from fbmonitor.models import CollectionResult
@@ -418,7 +418,7 @@ class TestTriage(unittest.TestCase):
                          "triage orders the digest, it must never filter it")
 
     def test_sorts_complaints_above_newer_ordinary_comments(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         old_complaint = Item(kind=KIND_AD_COMMENT, id="a", account="x",
                              created_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
                              text="absolute rip off")
@@ -558,18 +558,18 @@ class TestRunAndDigest(unittest.TestCase):
     def test_missing_token_is_reported_not_crashed(self):
         acct = account(token_env="DEFINITELY_NOT_SET_12345")
         os.environ.pop("DEFINITELY_NOT_SET_12345", None)
-        report = run([acct], self.state)
+        report = run([acct], self.state, token_checker=lambda *a, **k: None)
         self.assertTrue(report.has_problems)
         self.assertIn("no token", report.accounts[0].fatal)
         self.assertIn("DEFINITELY_NOT_SET_12345", render_text(report))
 
     def test_digest_says_so_when_nothing_is_new(self):
-        report = run([], self.state)
+        report = run([], self.state, token_checker=lambda *a, **k: None)
         self.assertIn("Nothing new", render_text(report))
 
     def test_json_output_is_valid(self):
         acct = account(token_env="DEFINITELY_NOT_SET_12345")
-        report = run([acct], self.state)
+        report = run([acct], self.state, token_checker=lambda *a, **k: None)
         payload = json.loads(render_json(report))
         self.assertEqual(payload["total_new"], 0)
         self.assertEqual(payload["accounts"][0]["slug"], "test-co")
@@ -672,7 +672,8 @@ class TestAdsNeedAUserToken(unittest.TestCase):
 
     def test_says_so_when_no_ads_token_is_configured(self):
         acct = account(token_env="PAGE_TOKEN_T", ads_token_env=None)
-        report = run([acct], self.state, sources=[KIND_AD_COMMENT])
+        report = run([acct], self.state, sources=[KIND_AD_COMMENT],
+                     token_checker=lambda *a, **k: None)
         problems = report.accounts[0].problems
         self.assertEqual(len(problems), 1)
         self.assertIn("Page token cannot read an ad account",
@@ -700,7 +701,8 @@ class TestAdsNeedAUserToken(unittest.TestCase):
         })
         try:
             run([acct], self.state,
-                sources=[KIND_AD_COMMENT, KIND_PAGE_COMMENT])
+                sources=[KIND_AD_COMMENT, KIND_PAGE_COMMENT],
+                token_checker=lambda *a, **k: None)
         finally:
             monitor_module.COLLECTORS.clear()
             monitor_module.COLLECTORS.update(original)
@@ -802,6 +804,122 @@ class TestTelegramDelivery(unittest.TestCase):
         notify.send(self._report(), self.URL, session=Accepting())
         self.assertEqual(sent["chat_id"], "-100999")
         self.assertIn("rip off", sent["text"])
+
+
+class TestTokenExpiryWarning(unittest.TestCase):
+    """The ads token dies after ~60 days, and dies silently.
+
+    When it expires, ad comments simply stop being reported: the run still
+    succeeds and the channel stays quiet, which is what this tool uses to
+    mean "nothing wrong". Warning in advance is the only thing that stops a
+    silent expiry looking exactly like good news.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state = State(Path(self.dir.name) / "state.json")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _client(self, expires_in_days=None):
+        expires_at = 0
+        if expires_in_days is not None:
+            when = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+            expires_at = int(when.timestamp())
+        return FakeGraph({"debug_token": {"data": {"expires_at": expires_at}}})
+
+    def test_reads_the_remaining_days(self):
+        # Truncated rather than rounded, so a token with 29 days and 23
+        # hours left reports 29. For a deadline warning that errs the safe
+        # way: early rather than late.
+        self.assertEqual(
+            tokens.days_until_expiry(self._client(30), "tok"), 29)
+
+    def test_zero_expiry_means_never_expires(self):
+        # Graph reports a non-expiring token as 0, the same as an absent
+        # field. Treating that as "expired today" would cry wolf forever.
+        self.assertIsNone(tokens.days_until_expiry(self._client(None), "tok"))
+
+    def test_silent_while_the_deadline_is_far_off(self):
+        self.assertIsNone(tokens.warning_for(45, label="ads token"))
+
+    def test_warns_inside_each_threshold(self):
+        for days in (14, 7, 3, 1):
+            self.assertIsNotNone(tokens.warning_for(days, label="ads token"),
+                                 f"expected a warning at {days} days")
+
+    def test_says_what_the_silence_will_look_like(self):
+        # The message has to explain the symptom, because the symptom is
+        # nothing happening.
+        warning = tokens.warning_for(3, label="ads token")
+        self.assertIn("ad comments stop being reported", warning)
+        self.assertIn("nothing looks wrong", warning)
+
+    def test_an_expired_token_is_stated_in_the_past_tense(self):
+        warning = tokens.warning_for(0, label="ads token")
+        self.assertIn("has expired", warning)
+
+    def test_an_uninspectable_token_is_reported_not_swallowed(self):
+        graph = FakeGraph({}, errors={"debug_token": GraphError("nope", code=190)})
+        warning = tokens.check(graph, "tok", label="ads token")
+        self.assertIn("could not check", warning)
+
+    def test_the_warning_reaches_the_report_and_the_chat(self):
+        acct = account(token_env="PAGE_T", ads_token_env="ADS_T",
+                       disabled_sources=list(KIND_ORDER))
+        os.environ["PAGE_T"] = "page"
+        os.environ["ADS_T"] = "ads"
+        try:
+            report = run([acct], self.state,
+                         token_checker=lambda *a, **k: "the ads token expires in 3 days")
+        finally:
+            os.environ.pop("PAGE_T", None)
+            os.environ.pop("ADS_T", None)
+
+        self.assertIn("expires in 3 days", report.warnings[0])
+        self.assertTrue(report.has_problems)
+        # It must survive the quiet rule, or the alert never arrives.
+        self.assertTrue(notify.should_send(report, reported_problems=""))
+        self.assertIn("Action needed", notify.render_chat(report))
+
+    def test_checked_once_a_day_not_every_run(self):
+        calls = []
+
+        def counting(*a, **k):
+            calls.append(1)
+            return None
+
+        acct = account(token_env="PAGE_T", ads_token_env="ADS_T",
+                       disabled_sources=list(KIND_ORDER))
+        os.environ["PAGE_T"] = "page"
+        os.environ["ADS_T"] = "ads"
+        try:
+            for _ in range(3):
+                run([acct], self.state, token_checker=counting)
+        finally:
+            os.environ.pop("PAGE_T", None)
+            os.environ.pop("ADS_T", None)
+        self.assertEqual(len(calls), 1,
+                         "an answer measured in weeks needs one call a day")
+
+    def test_the_warning_persists_between_daily_checks(self):
+        acct = account(token_env="PAGE_T", ads_token_env="ADS_T",
+                       disabled_sources=list(KIND_ORDER))
+        os.environ["PAGE_T"] = "page"
+        os.environ["ADS_T"] = "ads"
+        try:
+            first = run([acct], self.state,
+                        token_checker=lambda *a, **k: "expires in 2 days")
+            second = run([acct], self.state,
+                         token_checker=lambda *a, **k: "should not be called")
+        finally:
+            os.environ.pop("PAGE_T", None)
+            os.environ.pop("ADS_T", None)
+        self.assertIn("expires in 2 days", first.warnings[0])
+        # Without this the warning would vanish for 24 hours after showing
+        # once, which is when it matters most.
+        self.assertIn("expires in 2 days", second.warnings[0])
 
 
 class TestStandingProblemsAreNotRepeated(unittest.TestCase):

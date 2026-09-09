@@ -32,7 +32,7 @@ class NotifyError(RuntimeError):
 
 def problem_signature(report: Report) -> str:
     """A stable fingerprint of everything currently broken."""
-    parts: list[str] = []
+    parts: list[str] = list(report.warnings)
     for account in report.accounts:
         if account.fatal:
             parts.append(f"{account.account.slug}:fatal:{account.fatal}")
@@ -64,6 +64,9 @@ def should_send(report: Report, *, reported_problems: str | None = None) -> bool
 def render_chat(report: Report) -> str:
     """A short, scannable message. The digest file holds the full detail."""
     lines: list[str] = []
+
+    for warning in report.warnings:
+        lines.append(f"⏳ *Action needed:* {warning}")
 
     if report.total_complaints:
         lines.append(

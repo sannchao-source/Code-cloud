@@ -101,6 +101,28 @@ class State:
     def set_reported_problems(self, signature: str) -> None:
         self._data["reported_problems"] = signature
 
+    # -- token expiry checks --------------------------------------------
+
+    def due_for_token_check(self, hours: int) -> bool:
+        raw = self._data.get("token_checked_at")
+        if not raw:
+            return True
+        try:
+            last = datetime.fromisoformat(raw)
+        except ValueError:
+            return True
+        age = datetime.now(timezone.utc) - last
+        return age.total_seconds() >= hours * 3600
+
+    def mark_token_checked(self, warning: str | None) -> None:
+        self._data["token_checked_at"] = datetime.now(timezone.utc).isoformat()
+        # Kept so the warning persists between the daily checks -- otherwise
+        # it would appear once and vanish for 24 hours.
+        self._data["token_warning"] = warning or ""
+
+    def token_warning(self) -> str:
+        return self._data.get("token_warning", "")
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Write-then-rename: the reader either sees the old file or the new

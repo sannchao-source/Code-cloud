@@ -374,6 +374,14 @@ work than a timer.
 - **Ad comments need the right token.** Comments on an ad live on the Page
   post behind it, so the token must be a Page token for the Page the ads run
   under. If it is not, the collector says so rather than reporting nothing.
+- **The ads token warns before it dies.** It lasts about 60 days, and its
+  expiry is silent — ad comments simply stop being reported while the run
+  still succeeds and the channel stays quiet, which is what this tool uses
+  to mean "nothing wrong". So the token is asked once a day how long it has
+  left, and an alert goes to the chat channel at 14, 7, 3 and 1 days, then
+  once it has gone. Bucketed rather than daily so it does not become
+  background noise. A System User token, which does not expire, removes the
+  problem entirely.
 - **Polling is not instant.** A 15-minute cron means a bad comment can sit
   under a live ad for up to 15 minutes. If that is too slow, the next step is
   a Page webhook subscription on the `feed` topic, which pushes comment
