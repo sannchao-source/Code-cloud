@@ -7,7 +7,9 @@ param(
     [switch]$Preview,
     # Limit to one source, e.g. -Source ad_comment. Repeatable by comma.
     [string[]]$Source,
-    [switch]$Verbose
+    [switch]$Verbose,
+    # Send a sample alert and exit, to prove chat delivery works.
+    [switch]$TestNotify
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +61,7 @@ if (-not (Test-Path $python)) {
 }
 
 $arguments = @("-m", "fbmonitor", "--notify")
+if ($TestNotify) { $arguments = @("-m", "fbmonitor", "--test-notify") }
 if ($Preview) { $arguments += "--preview" }
 if ($Verbose) { $arguments += "--verbose" }
 foreach ($s in $Source) { $arguments += @("--source", $s) }

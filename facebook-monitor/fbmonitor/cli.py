@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="post the digest to the chat webhook in "
                              "$FBMONITOR_WEBHOOK_URL, but only when there is "
                              "something new or something broke")
+    parser.add_argument("--test-notify", action="store_true",
+                        help="send a sample alert to the chat webhook and "
+                             "exit, to prove delivery works before relying "
+                             "on it")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 
@@ -79,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     # credentials to the console and into digest.txt. Our own debug lines
     # carry everything useful for diagnosis without the secret.
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    if args.test_notify:
+        return _test_notify()
 
     try:
         accounts = load_accounts(args.config)
@@ -116,6 +123,48 @@ def main(argv: list[str] | None = None) -> int:
     # Exit 1 when something could not be checked, so a scheduled run can
     # surface a broken token instead of looking like a quiet day.
     return 1 if report.has_problems else 0
+
+
+def _test_notify() -> int:
+    """Send one sample alert, so delivery is proven rather than assumed.
+
+    A monitor whose alarm is silently misconfigured is worse than none: it
+    buys confidence it has not earned. This makes the alarm testable on
+    demand, without waiting for a real complaint to find out.
+    """
+    from datetime import datetime, timezone
+
+    from .models import KIND_AD_COMMENT, CollectionResult, Item
+    from .monitor import AccountReport, Report
+    from .config import Account
+    from . import triage
+
+    url = os.environ.get("FBMONITOR_WEBHOOK_URL", "")
+    if not url:
+        print("FBMONITOR_WEBHOOK_URL is not set", file=sys.stderr)
+        return 2
+
+    sample = Item(
+        kind=KIND_AD_COMMENT, id="test", account="test",
+        created_time=datetime.now(timezone.utc),
+        author="Test Delivery",
+        text=("This is a test alert. If you can read this, complaints on "
+              "your live ads will reach you here."),
+        context="test message — no action needed")
+    account = Account(name="Delivery test", slug="test", token_env="UNUSED",
+                      facebook_page_id="0")
+    report_account = AccountReport(account=account)
+    report_account.results = [CollectionResult(
+        kind=KIND_AD_COMMENT, account="test", items=triage.apply([sample]))]
+
+    try:
+        notify.send(Report(accounts=[report_account]), url)
+    except notify.NotifyError as exc:
+        print(f"delivery FAILED: {exc}", file=sys.stderr)
+        return 1
+    print(f"sent a test alert to {notify.describe_target(url)} — "
+          "check that it arrived")
+    return 0
 
 
 def _notify(report) -> None:

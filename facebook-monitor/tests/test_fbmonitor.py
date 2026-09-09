@@ -804,6 +804,44 @@ class TestTelegramDelivery(unittest.TestCase):
         self.assertIn("rip off", sent["text"])
 
 
+class TestNotifySelfTest(unittest.TestCase):
+    """--test-notify proves the alarm works rather than assuming it."""
+
+    def tearDown(self):
+        os.environ.pop("FBMONITOR_WEBHOOK_URL", None)
+
+    def test_reports_a_config_error_when_no_webhook_is_set(self):
+        os.environ.pop("FBMONITOR_WEBHOOK_URL", None)
+        from fbmonitor.cli import main
+        self.assertEqual(main(["--test-notify"]), 2)
+
+    def test_returns_nonzero_when_delivery_fails(self):
+        os.environ["FBMONITOR_WEBHOOK_URL"] = (
+            "https://api.telegram.org/bot1:A/sendMessage")  # no chat_id
+        from fbmonitor.cli import main
+        self.assertEqual(main(["--test-notify"]), 1,
+                         "a broken webhook must not report success")
+
+    def test_sends_a_sample_that_survives_the_quiet_rule(self):
+        # should_send() suppresses runs with nothing new, so the sample has
+        # to look like a real finding or the test would post nothing and
+        # still claim success.
+        from fbmonitor import cli
+        captured = {}
+
+        def fake_send(report, url, **kw):
+            captured["message"] = notify.render_chat(report)
+
+        original = notify.send
+        notify.send = fake_send
+        os.environ["FBMONITOR_WEBHOOK_URL"] = "https://hooks.slack.com/x"
+        try:
+            self.assertEqual(cli.main(["--test-notify"]), 0)
+        finally:
+            notify.send = original
+        self.assertIn("test alert", captured["message"].lower())
+
+
 class TestWindowsEncoding(unittest.TestCase):
     """Windows defaults to cp1252, not UTF-8.
 
