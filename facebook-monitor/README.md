@@ -107,33 +107,61 @@ pip install -r requirements.txt
    | `instagram_manage_messages` | Instagram DMs |
    | `ads_read` | comments on ads |
 
-   `pages_messaging` and the two `instagram_manage_*` scopes are the ones
-   that usually need App Review before they work on a live Page. Everything
-   else keeps working while that is pending — a missing scope is reported
-   as "not checked", not as a crash.
+   **You probably do not need App Review.** While the app is in
+   *Development* mode, its permissions work for anyone who holds a role on
+   the app (admin, developer, tester). You are an admin of your own app and
+   of these Pages, so reading your own Pages' data works straight away. App
+   Review only becomes necessary if you switch the app to Live mode or need
+   it to act for people who have no role on it. If a permission does get
+   refused, the run reports that source as "not checked" and the others
+   carry on regardless.
 
-4. Generate a **Page access token** (not a user token), then exchange it for
-   a long-lived one — short-lived tokens expire in about an hour:
+4. **Get a long-lived token, in this order.** The order matters: a Page
+   token inherits the lifetime of the user token it came from, so deriving
+   one from a short-lived user token gives you a Page token that dies in
+   about an hour.
 
-   ```bash
-   curl -s "https://graph.facebook.com/v21.0/oauth/access_token?\
-   grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET\
-   &fb_exchange_token=SHORT_LIVED_TOKEN"
-   ```
+   a. In the Explorer, generate a **User** token with the permissions above
+      (this one is short-lived — that is fine, it is only a stepping stone).
 
-   A long-lived Page token does not expire as long as it is used, but it is
-   still a credential: keep it out of git.
+   b. Exchange it for a **long-lived user token** (~60 days). App ID and
+      secret are in your app's Settings → Basic:
+
+      ```bash
+      curl -s "https://graph.facebook.com/v21.0/oauth/access_token\
+      ?grant_type=fb_exchange_token\
+      &client_id=APP_ID&client_secret=APP_SECRET\
+      &fb_exchange_token=SHORT_LIVED_USER_TOKEN"
+      ```
+
+   c. Use that long-lived user token to ask for your **Page tokens**:
+
+      ```bash
+      curl -s "https://graph.facebook.com/v21.0/me/accounts\
+      ?fields=id,name,access_token,instagram_business_account\
+      &access_token=LONG_LIVED_USER_TOKEN"
+      ```
+
+      Each Page in the response carries its own `access_token`. Because it
+      came from a long-lived user token, **it does not expire** — it stays
+      valid until you change your password, revoke the app, or lose admin
+      rights on the Page. Those are the three values for `.env`.
+
+      This call also returns each Page's `instagram_business_account`, which
+      is the `instagram_user_id` the config wants.
+
+   Treat these tokens like passwords. Anyone holding one can read
+   everything the permissions allow. Keep them in `.env`, never in git, and
+   never paste them into a chat window or an issue.
 
 ### 3. Find your IDs
 
-```bash
-# Page IDs, and the linked Instagram account for each
-curl -s "https://graph.facebook.com/v21.0/me/accounts\
-?fields=id,name,instagram_business_account&access_token=$TOKEN"
+Step 4c above already returns each Page's ID and its linked Instagram
+account. Ad account IDs are in the table further down, or:
 
-# Ad accounts
+```bash
 curl -s "https://graph.facebook.com/v21.0/me/adaccounts\
-?fields=id,name&access_token=$TOKEN"
+?fields=id,name&access_token=LONG_LIVED_USER_TOKEN"
 ```
 
 ### 4. Configure
