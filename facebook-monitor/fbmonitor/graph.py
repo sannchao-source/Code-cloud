@@ -18,7 +18,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-DEFAULT_API_VERSION = "v21.0"
+DEFAULT_API_VERSION = "v26.0"
 GRAPH_HOST = "graph.facebook.com"
 
 # Graph returns these when a token lacks a scope or a Page has a feature

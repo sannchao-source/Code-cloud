@@ -148,7 +148,7 @@ pip install -r requirements.txt
       secret are in your app's Settings → Basic:
 
       ```bash
-      curl -s "https://graph.facebook.com/v21.0/oauth/access_token\
+      curl -s "https://graph.facebook.com/v26.0/oauth/access_token\
       ?grant_type=fb_exchange_token\
       &client_id=APP_ID&client_secret=APP_SECRET\
       &fb_exchange_token=SHORT_LIVED_USER_TOKEN"
@@ -157,7 +157,7 @@ pip install -r requirements.txt
    c. Use that long-lived user token to ask for your **Page tokens**:
 
       ```bash
-      curl -s "https://graph.facebook.com/v21.0/me/accounts\
+      curl -s "https://graph.facebook.com/v26.0/me/accounts\
       ?fields=id,name,access_token,instagram_business_account\
       &access_token=LONG_LIVED_USER_TOKEN"
       ```
@@ -180,7 +180,7 @@ Step 4c above already returns each Page's ID and its linked Instagram
 account. Ad account IDs are in the table further down, or:
 
 ```bash
-curl -s "https://graph.facebook.com/v21.0/me/adaccounts\
+curl -s "https://graph.facebook.com/v26.0/me/adaccounts\
 ?fields=id,name&access_token=LONG_LIVED_USER_TOKEN"
 ```
 
@@ -228,7 +228,8 @@ minutes sits well inside the rate limits for a couple of Pages.
 
 ## Notes
 
-- **Graph API version.** Defaults to `v21.0` (`fbmonitor/graph.py`). Meta
+- **Graph API version.** Defaults to `v26.0` (`fbmonitor/graph.py`), which
+  is what the Graph API Explorer was serving when this was set up. Meta
   retires versions roughly two years after release, so check the
   [changelog](https://developers.facebook.com/docs/graph-api/changelog) and
   bump it — either edit the constant or pass `--api-version`.
