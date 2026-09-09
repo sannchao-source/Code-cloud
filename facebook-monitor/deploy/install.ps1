@@ -79,22 +79,46 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Write-Host "==> replaced the existing task"
 }
 
+# Register-ScheduledTask reports failure as a NON-TERMINATING error, so a
+# plain try/catch never fires and the script sails on announcing success --
+# while the old task has already been removed, leaving nothing scheduled at
+# all. -ErrorAction Stop is what makes the failure catchable.
+$registered = $false
 try {
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-        -Settings $settings -Principal $principal `
+        -Settings $settings -Principal $principal -ErrorAction Stop `
         -Description "Check Facebook for new ad comments and comments" | Out-Null
-    Write-Host "==> scheduled every $IntervalMinutes minutes (runs hidden)"
+    $registered = $true
+    Write-Host "==> scheduled every $IntervalMinutes minutes (runs hidden)" -ForegroundColor Green
 } catch {
-    # S4U needs "Log on as a batch job" rights, which a locked-down domain
-    # policy can withhold. Falling back keeps the monitor working; it just
-    # shows a window each run.
-    Write-Warning "could not register a hidden task ($($_.Exception.Message))"
-    Write-Warning "falling back to an interactive task -- a window will appear each run"
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-        -Settings $settings -RunLevel Limited `
-        -Description "Check Facebook for new ad comments and comments" | Out-Null
-    Write-Host "==> scheduled every $IntervalMinutes minutes (visible)"
+    # S4U needs "Log on as a batch job" rights, which a locked-down policy
+    # can withhold. Falling back keeps the monitor running; it just shows a
+    # window each run.
+    Write-Warning "hidden task refused ($($_.Exception.Message.Trim()))"
+    Write-Warning "falling back to a visible task -- a window will appear each run"
+    try {
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+            -Settings $settings -RunLevel Limited -ErrorAction Stop `
+            -Description "Check Facebook for new ad comments and comments" | Out-Null
+        $registered = $true
+        Write-Host "==> scheduled every $IntervalMinutes minutes (visible)" -ForegroundColor Yellow
+    } catch {
+        Write-Warning "visible task also refused ($($_.Exception.Message.Trim()))"
+    }
 }
+
+# Never claim success without checking. The install removes the previous
+# task first, so a silent failure here leaves the monitor switched off --
+# and a monitor that is off looks exactly like a monitor with nothing to
+# report.
+if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "NOTHING IS SCHEDULED. The monitor will not run." -ForegroundColor Red
+    Write-Host "Re-run this in an ADMIN PowerShell. If it still fails, the" -ForegroundColor Red
+    Write-Host "account may lack 'Log on as a batch job' rights." -ForegroundColor Red
+    exit 1
+}
+
 Write-Host ""
 Write-Host "Run it now:     Start-ScheduledTask -TaskName $TaskName"
 Write-Host "Check it:       Get-ScheduledTask -TaskName $TaskName | Get-ScheduledTaskInfo"
