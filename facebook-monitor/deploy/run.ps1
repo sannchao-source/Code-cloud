@@ -77,9 +77,22 @@ $ErrorActionPreference = "Continue"
 $output = & $python $arguments 2>&1 | ForEach-Object { "$_" }
 $output | ForEach-Object { Write-Host $_ }
 
-# Tee-Object has no -Encoding on PowerShell 5.1, so writing the file
-# separately is what keeps digest.txt readable rather than mojibake.
-$output | Out-File -FilePath (Join-Path $AppDir "digest.txt") -Append -Encoding utf8
+$digest = Join-Path $AppDir "digest.txt"
+
+# Keep the log from growing without bound, and stop one bad append from
+# corrupting the whole history: past a few megabytes the file is rolled to
+# digest.old.txt and started fresh.
+if ((Test-Path $digest) -and ((Get-Item $digest).Length -gt 4MB)) {
+    Move-Item $digest (Join-Path $AppDir "digest.old.txt") -Force
+}
+
+# Out-File and Tee-Object each pick their own encoding depending on the
+# PowerShell version, so appending through them left digest.txt holding a
+# mix of encodings that reads back as mojibake. Writing the bytes directly
+# as UTF-8 without a BOM is the same on every version.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::AppendAllText(
+    $digest, (($output -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
 
 $code = $LASTEXITCODE
 switch ($code) {
