@@ -90,11 +90,26 @@ pip install -r requirements.txt
 
 ### 2. Create a Meta app and get a Page token
 
-1. At [developers.facebook.com](https://developers.facebook.com/apps) create
-   an app of type **Business**.
-2. Add the **Facebook Login** and **Instagram** products.
+1. **Register as a Meta developer first.** Landing on
+   developers.facebook.com while signed in to Facebook shows marketing
+   pages, not a dashboard — there is no "Create App" button until you have
+   registered, which is the usual reason people get stuck here. Go straight
+   to
+   [developers.facebook.com/async/registration](https://developers.facebook.com/async/registration),
+   accept the terms, and confirm the codes sent to your phone and email.
+   It is free and takes a couple of minutes.
+
+2. **Create the app** at
+   [developers.facebook.com/apps/creation](https://developers.facebook.com/apps/creation/)
+   (or **My Apps → Create App**). Give it a name and a contact email.
+
+   When asked to pick a **use case**, choose **Other**, then app type
+   **Business**. The guided use cases pre-select a narrow permission set;
+   "Other" is what leaves you free to add all eight permissions below,
+   which span Pages, Instagram and ads.
 3. In the [Graph API Explorer](https://developers.facebook.com/tools/explorer),
-   select your app and request these **read** permissions:
+   select your app from the dropdown and request these **read**
+   permissions:
 
    | Permission | Needed for |
    |---|---|
