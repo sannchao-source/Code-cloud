@@ -382,8 +382,20 @@ requirement, not an optimisation.
 
 The first version read every ad post on every run: at 60 posts per
 placement across three ad accounts every fifteen minutes, roughly **1,500
-calls an hour** from an app created the day before. Meta blocked its API
-access within a day. Three changes bound it to around **230 an hour**:
+calls an hour** — 36,000 a day — from an app created the day before. Meta
+blocked its API access within a day.
+
+**The cap and the schedule must be chosen together.** Total calls are
+roughly *(ad posts × runs per day)*, so halving the interval doubles the
+bill:
+
+| Schedule | Calls/day (at `MAX_COMMENT_CALLS = 150`) |
+|---|---|
+| **Twice a day (default)** | **~640** |
+| Hourly | ~7,600 |
+| Every 15 minutes | ~30,000 — this is what got blocked |
+
+Three changes keep it bounded:
 
 - **Only ACTIVE ads.** A paused ad is not being served, so its comments are
   shown to nobody new — which is the whole reason to watch ad comments.
@@ -393,17 +405,23 @@ access within a day. Three changes bound it to around **230 an hour**:
   an HTTP 200, so retrying looks like ignoring it. The run abandons its
   remaining posts and leaves them for next time.
 
-If you add ad accounts or shorten the interval, recheck this. The arithmetic
-is in the commit that introduced the cap.
+If you add ad accounts or shorten the interval, redo this arithmetic and
+lower `MAX_COMMENT_CALLS` to match.
 
 #### How often
 
-Every 15 minutes is the gap between a hostile comment appearing under a
-live ad and you seeing it, and it sits well inside the rate limits for a
-couple of Pages. Trim it if that is too slow. Below roughly five minutes,
-a Page webhook subscription is the better instrument — but that needs the
-app published and a public HTTPS endpoint, which is a different piece of
-work than a timer.
+The default is **twice a day**, at 07:00 and 19:00.
+
+The gap between checks is the window in which a hostile comment under a
+live ad goes unanswered, so shorter would be better for the monitoring —
+but an app that calls too often gets blocked, and a blocked app sees
+nothing at all. Twice a day is the cadence that survives.
+
+To go faster, lower `MAX_COMMENT_CALLS` proportionally: hourly with a cap
+of 30 lands around the same daily total. Below roughly an hour, polling is
+the wrong instrument altogether — a Page webhook subscription pushes
+comment events within seconds and costs no polling calls, but needs the app
+published and a public HTTPS endpoint.
 
 ## Notes
 

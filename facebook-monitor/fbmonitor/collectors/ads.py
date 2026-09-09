@@ -31,14 +31,21 @@ log = logging.getLogger(__name__)
 AD_LIMIT = 50
 COMMENT_LIMIT = 50
 
-# Reading comments costs one Graph call per ad post, every run. Checking
-# every post on every run put this app past 1,500 calls an hour, which got
-# its API access blocked outright -- so the budget is now fixed and the
-# posts are rotated through it.
+# Reading comments costs one Graph call per ad post, per run, so the total
+# is (posts x runs per day). Checking every post every fifteen minutes put
+# this app past 1,500 calls an hour and got its API access blocked, so the
+# work per run is capped and the posts rotate through the cap.
 #
-# A full cycle at 20 per run covers ~80 posts within an hour, which is well
-# inside the window that matters for a comment sitting under a live ad.
-MAX_COMMENT_CALLS = 20
+# The cap and the schedule have to be chosen together:
+#
+#   twice a day (the default)   150 x 2 x 2 accounts  =    600 calls/day
+#   every hour                  150 x 24 x 2          =  7,200 calls/day
+#   every 15 minutes            150 x 96 x 2          = 28,800 calls/day  <-- blocked
+#
+# At the default twice-daily cadence this covers every ad post in a typical
+# account in a single run. Shorten the schedule and this must come down with
+# it -- see "API call volume" in README.md.
+MAX_COMMENT_CALLS = 150
 
 
 def collect_ad_comments(client: GraphClient, account, page_client=None,
