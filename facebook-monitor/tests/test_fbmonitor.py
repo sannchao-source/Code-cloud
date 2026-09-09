@@ -731,6 +731,79 @@ class TestVerboseDoesNotLeakTokens(unittest.TestCase):
             "urllib3 must not log request URLs; they carry the access token")
 
 
+class TestTelegramDelivery(unittest.TestCase):
+    """Telegram differs from Slack and Discord in ways that fail quietly."""
+
+    URL = "https://api.telegram.org/bot123:ABC/sendMessage?chat_id=-100999"
+
+    def _report(self, text="absolute rip off"):
+        item = Item(kind=KIND_AD_COMMENT, id="i1", account="test-co",
+                    created_time=datetime(2026, 9, 9, tzinfo=timezone.utc),
+                    author="Someone", text=text)
+        ar = AccountReport(account=account(name="Republic of Barbers"))
+        ar.results = [CollectionResult(kind=KIND_AD_COMMENT, account="test-co",
+                                       items=triage.apply([item]))]
+        return Report(accounts=[ar])
+
+    def test_chat_id_moves_from_the_url_into_the_body(self):
+        # Telegram reads parameters from the JSON body and ignores the query
+        # string, so a chat_id left in the URL is dropped and the call fails.
+        payload, target = notify._payload_for(self.URL, "hello")
+        self.assertEqual(payload["chat_id"], "-100999")
+        self.assertNotIn("chat_id", target)
+        self.assertTrue(target.endswith("/sendMessage"))
+
+    def test_missing_chat_id_says_what_to_add(self):
+        with self.assertRaises(notify.NotifyError) as ctx:
+            notify._payload_for("https://api.telegram.org/bot123:ABC/sendMessage",
+                                "hello")
+        self.assertIn("chat_id", str(ctx.exception))
+
+    def test_emphasis_is_stripped_so_names_cannot_break_the_message(self):
+        # A customer called "some_one" would make Telegram reject the whole
+        # message as malformed markup, losing a complaint entirely.
+        payload, _ = notify._payload_for(self.URL, "*bold* and _italic_ text")
+        self.assertEqual(payload["text"], "bold and italic text")
+
+    def test_a_refusal_returned_as_http_200_is_not_treated_as_success(self):
+        class Refusing:
+            @staticmethod
+            def post(url, json=None, timeout=None):
+                class Resp:
+                    status_code = 200
+                    text = '{"ok": false, "description": "chat not found"}'
+
+                    @staticmethod
+                    def json():
+                        return {"ok": False, "description": "chat not found"}
+                return Resp()
+
+        with self.assertRaises(notify.NotifyError) as ctx:
+            notify.send(self._report(), self.URL, session=Refusing())
+        self.assertIn("chat not found", str(ctx.exception))
+
+    def test_a_genuine_success_passes(self):
+        sent = {}
+
+        class Accepting:
+            @staticmethod
+            def post(url, json=None, timeout=None):
+                sent.update(json)
+
+                class Resp:
+                    status_code = 200
+                    text = '{"ok": true}'
+
+                    @staticmethod
+                    def json():
+                        return {"ok": True}
+                return Resp()
+
+        notify.send(self._report(), self.URL, session=Accepting())
+        self.assertEqual(sent["chat_id"], "-100999")
+        self.assertIn("rip off", sent["text"])
+
+
 class TestWindowsEncoding(unittest.TestCase):
     """Windows defaults to cp1252, not UTF-8.
 

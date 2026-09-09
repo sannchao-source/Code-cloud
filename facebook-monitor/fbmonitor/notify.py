@@ -9,9 +9,9 @@ mute within a day -- and a muted channel is worse than no channel.
 
 from __future__ import annotations
 
-import json
 import logging
-from urllib.parse import urlparse
+import re
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import requests
 
@@ -108,19 +108,53 @@ def send(report: Report, url: str, *, session=None) -> None:
         raise NotifyError(
             f"chat webhook rejected the message (HTTP {resp.status_code}): {body}")
 
+    # Telegram answers 200 even when it refused the message, putting the
+    # real outcome in the body -- so a status check alone would report a
+    # silent failure as a success.
+    if "telegram.org" in (urlparse(url).hostname or ""):
+        try:
+            answer = resp.json()
+        except ValueError:
+            return
+        if isinstance(answer, dict) and answer.get("ok") is False:
+            raise NotifyError(
+                f"Telegram refused the message: "
+                f"{answer.get('description', 'no reason given')}")
+
 
 def _payload_for(url: str, message: str) -> tuple[dict, str]:
-    """Each provider wants a different field name for the same string."""
-    host = (urlparse(url).hostname or "").lower()
+    """Each provider wants a different shape for the same string."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
 
     if "discord.com" in host or "discordapp.com" in host:
         return {"content": message}, url
+
     if "telegram.org" in host:
-        # Telegram takes the chat id in the URL as ...?chat_id=<id>; the
-        # message rides in the body.
-        return {"text": message, "parse_mode": "Markdown"}, url
+        # Telegram reads its parameters from the JSON body when the request
+        # carries one, and ignores the query string -- so a chat_id left in
+        # the URL is silently dropped and the call fails. Move it into the
+        # body and send a clean URL.
+        chat_ids = parse_qs(parsed.query).get("chat_id")
+        if not chat_ids:
+            raise NotifyError(
+                "the Telegram URL needs ?chat_id=<id> on the end, e.g. "
+                "https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=12345")
+        clean = urlunparse(parsed._replace(query="", fragment=""))
+        # No parse_mode: the digest carries customer names, and one stray
+        # underscore or asterisk in a name makes Telegram reject the whole
+        # message as malformed markup. A plain message that arrives beats a
+        # formatted one that does not, so the emphasis marks are stripped.
+        return {"chat_id": chat_ids[0], "text": _strip_emphasis(message)}, clean
+
     # Slack incoming webhooks, and the many services that copy their shape.
     return {"text": message}, url
+
+
+def _strip_emphasis(message: str) -> str:
+    """Remove the *bold* and _italic_ markers used for Slack and Discord."""
+    message = re.sub(r"\*(.+?)\*", r"\1", message)
+    return re.sub(r"_(.+?)_", r"\1", message)
 
 
 def describe_target(url: str) -> str:

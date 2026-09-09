@@ -325,6 +325,24 @@ since it would report identically forever.
 Complaints lead the message, and it is capped to fit Discord's 2000-character
 limit; `digest.txt` always holds the full detail.
 
+**Telegram** needs the chat id appended to the URL:
+
+```
+https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>
+```
+
+Two things about Telegram differ from the others and both fail quietly.
+It reads its parameters from the JSON body and ignores the query string,
+so the chat id is moved into the body rather than left in the URL. And it
+answers HTTP 200 even when it refuses a message, putting the real outcome
+in `ok` — checking only the status code would report a silent failure as a
+success, so the body is checked too.
+
+Messages to Telegram are sent without markup. The digest carries customer
+names, and a single underscore in one would make Telegram reject the whole
+message as malformed — losing a complaint entirely. A plain message that
+arrives beats a formatted one that does not.
+
 #### How often
 
 Every 15 minutes is the gap between a hostile comment appearing under a
