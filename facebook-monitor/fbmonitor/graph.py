@@ -25,7 +25,7 @@ GRAPH_HOST = "graph.facebook.com"
 # switched off. They are worth surfacing to the operator rather than
 # crashing the whole run, because one missing scope should not stop the
 # other six collectors from reporting.
-_PERMISSION_CODES = {10, 200, 803}
+_PERMISSION_CODES = {10, 200, 230, 803}
 
 
 class GraphError(RuntimeError):

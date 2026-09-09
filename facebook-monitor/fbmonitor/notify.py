@@ -30,19 +30,35 @@ class NotifyError(RuntimeError):
     pass
 
 
-def should_send(report: Report) -> bool:
+def problem_signature(report: Report) -> str:
+    """A stable fingerprint of everything currently broken."""
+    parts: list[str] = []
+    for account in report.accounts:
+        if account.fatal:
+            parts.append(f"{account.account.slug}:fatal:{account.fatal}")
+        for result in account.results:
+            if result.error:
+                parts.append(f"{account.account.slug}:{result.kind}:{result.error}")
+    return "|".join(sorted(parts))
+
+
+def should_send(report: Report, *, reported_problems: str | None = None) -> bool:
     """Only speak when there is something worth interrupting someone for.
 
-    New items qualify. So does a source that broke -- a dead token must not
-    look like a quiet day. A source that is merely unconfigured does not,
-    since that reports identically on every run forever.
+    New items always qualify. A broken source qualifies once -- a dead
+    token must not read as a quiet day -- but not on every run thereafter:
+    a fault that recurs unchanged every fifteen minutes is a standing
+    condition, and a channel that repeats it gets muted, which costs the
+    complaint that arrives next week. So a problem is announced when it
+    appears or changes, and then goes quiet until it does.
+
+    A source that is merely unconfigured never qualifies at all, since it
+    would report identically forever.
     """
     if report.total_new:
         return True
-    return any(
-        account.fatal or any(r.error for r in account.results)
-        for account in report.accounts
-    )
+    current = problem_signature(report)
+    return bool(current) and current != (reported_problems or "")
 
 
 def render_chat(report: Report) -> str:

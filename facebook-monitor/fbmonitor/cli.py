@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         print(render_text(report))
 
     if args.notify:
-        _notify(report)
+        _notify(report, state, record=not args.preview)
 
     # Exit 1 when something could not be checked, so a scheduled run can
     # surface a broken token instead of looking like a quiet day.
@@ -167,7 +167,7 @@ def _test_notify() -> int:
     return 0
 
 
-def _notify(report) -> None:
+def _notify(report, state, *, record: bool = True) -> None:
     """Post to chat. A delivery failure must not lose the digest, which has
     already been printed by the time we get here."""
     url = os.environ.get("FBMONITOR_WEBHOOK_URL", "")
@@ -175,14 +175,21 @@ def _notify(report) -> None:
         print("--notify given but $FBMONITOR_WEBHOOK_URL is not set",
               file=sys.stderr)
         return
-    if not notify.should_send(report):
+    if not notify.should_send(
+            report, reported_problems=state.reported_problems()):
         return
     try:
         notify.send(report, url)
     except notify.NotifyError as exc:
+        # Do not record the problems as announced -- the message never
+        # arrived, so the next run should still try.
         print(f"chat delivery failed: {exc}", file=sys.stderr)
-    else:
-        print(f"posted to {notify.describe_target(url)}", file=sys.stderr)
+        return
+
+    print(f"posted to {notify.describe_target(url)}", file=sys.stderr)
+    if record:
+        state.set_reported_problems(notify.problem_signature(report))
+        state.save()
 
 
 if __name__ == "__main__":

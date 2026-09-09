@@ -804,6 +804,67 @@ class TestTelegramDelivery(unittest.TestCase):
         self.assertIn("rip off", sent["text"])
 
 
+class TestStandingProblemsAreNotRepeated(unittest.TestCase):
+    """A fault that recurs unchanged must be announced once, not forever.
+
+    The live install posted to Telegram on a run with zero new items,
+    because an Instagram permission error recurs on every run. At a
+    fifteen-minute interval that is ~96 identical alerts a day about
+    something that will never change -- and a muted channel costs the
+    complaint that arrives next week.
+    """
+
+    def _report(self, error=None, items=()):
+        ar = AccountReport(account=account(name="Republic of Barbers"))
+        ar.results = [CollectionResult(
+            kind=KIND_AD_COMMENT, account="test-co",
+            items=triage.apply(list(items)), error=error)]
+        return Report(accounts=[ar])
+
+    def _item(self):
+        return Item(kind=KIND_AD_COMMENT, id="i1", account="test-co",
+                    created_time=datetime(2026, 9, 9, tzinfo=timezone.utc),
+                    author="Someone", text="absolute rip off")
+
+    def test_a_new_problem_is_announced(self):
+        report = self._report(error="(#230) Requires instagram_manage_messages")
+        self.assertTrue(notify.should_send(report, reported_problems=""))
+
+    def test_the_same_problem_is_not_announced_again(self):
+        report = self._report(error="(#230) Requires instagram_manage_messages")
+        signature = notify.problem_signature(report)
+        self.assertFalse(
+            notify.should_send(report, reported_problems=signature),
+            "an unchanged standing fault must not re-alert every run")
+
+    def test_a_changed_problem_is_announced(self):
+        first = self._report(error="(#230) Requires instagram_manage_messages")
+        worse = self._report(error="(#190) Access token has expired")
+        self.assertTrue(notify.should_send(
+            worse, reported_problems=notify.problem_signature(first)))
+
+    def test_new_items_are_always_announced_even_with_a_standing_problem(self):
+        report = self._report(error="(#230) still broken", items=[self._item()])
+        signature = notify.problem_signature(report)
+        self.assertTrue(
+            notify.should_send(report, reported_problems=signature),
+            "a real comment must never be suppressed by problem dedup")
+
+    def test_a_missing_permission_is_a_skip_not_an_error(self):
+        # Code 230 is Instagram's missing-permission code. Classifying it as
+        # an error made it a recurring alert instead of a standing note.
+        self.assertTrue(GraphError("nope", code=230).is_permission_error)
+
+    def test_state_remembers_what_was_announced(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state.json"
+            state = State(path)
+            self.assertEqual(state.reported_problems(), "")
+            state.set_reported_problems("something:broken")
+            state.save()
+            self.assertEqual(State(path).reported_problems(), "something:broken")
+
+
 class TestNotifySelfTest(unittest.TestCase):
     """--test-notify proves the alarm works rather than assuming it."""
 

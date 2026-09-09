@@ -25,6 +25,16 @@ accounts:
       - "3178575389134669"   # Republic Of Barbers — live (Fresha service ads)
       - "1192428111245965"   # Rob Barbers — live (boosted FB + IG posts)
 
+    # Direct messages are switched off deliberately. They are private, so
+    # a bad one costs nothing publicly and the owner reads them directly.
+    # What is alerted here is only what a stranger can see: comments on
+    # live ads above all, then Page comments, visitor posts and
+    # recommendations. Delete a line to switch that source back on.
+    disabled_sources:
+      - messenger_dm
+      - instagram_dm
+
+
   - name: Raising Thinkers
     slug: raising-thinkers
     token_env: RAISING_THINKERS_PAGE_TOKEN
@@ -33,6 +43,16 @@ accounts:
     # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
     ad_account_ids:
       - "548901053966634"    # SC - Marketing — live (Vid/Image campaign)
+
+    # Direct messages are switched off deliberately. They are private, so
+    # a bad one costs nothing publicly and the owner reads them directly.
+    # What is alerted here is only what a stranger can see: comments on
+    # live ads above all, then Page comments, visitor posts and
+    # recommendations. Delete a line to switch that source back on.
+    disabled_sources:
+      - messenger_dm
+      - instagram_dm
+
 
 # Notes on what is deliberately not here:
 #

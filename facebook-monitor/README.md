@@ -317,10 +317,22 @@ Telegram webhook in `$FBMONITOR_WEBHOOK_URL`.
 
 It is deliberately quiet: **a run with nothing new posts nothing at all.** A
 channel that pings every fifteen minutes with "no change" gets muted within
-a day, and a muted channel is worse than no channel. It speaks when there
-are new items, or when a source broke — a dead token must not read as a
-quiet day. A source that is merely unconfigured never triggers a post,
-since it would report identically forever.
+a day, and a muted channel costs you the complaint that arrives next week.
+
+New items always post. A broken source posts **once** — a dead token must
+not read as a quiet day — and then stays quiet until the fault changes or
+clears, because a fault recurring unchanged every fifteen minutes is a
+standing condition, not news. A source that is merely unconfigured never
+posts at all.
+
+### What is worth alerting on
+
+`disabled_sources` in `accounts.yaml` decides what reaches the channel. The
+shipped config switches off both DM sources, on the reasoning that a direct
+message is private — a bad one costs nothing publicly and the owner reads
+them directly — while a comment under a live ad is served to every future
+person that ad reaches. Alerting on what strangers can see keeps the signal
+worth interrupting someone for. Delete a line to switch a source back on.
 
 Complaints lead the message, and it is capped to fit Discord's 2000-character
 limit; `digest.txt` always holds the full detail.

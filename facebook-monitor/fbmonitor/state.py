@@ -93,6 +93,14 @@ class State:
         self._bucket(account, kind)["last_run"] = (
             datetime.now(timezone.utc).isoformat())
 
+    # -- what has already been announced --------------------------------
+
+    def reported_problems(self) -> str:
+        return self._data.get("reported_problems", "")
+
+    def set_reported_problems(self, signature: str) -> None:
+        self._data["reported_problems"] = signature
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Write-then-rename: the reader either sees the old file or the new
