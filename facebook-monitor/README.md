@@ -250,11 +250,14 @@ Exit codes: `0` clean, `1` something could not be checked (bad token,
 missing scope), `2` config error. A scheduled run can key off `1` so a
 broken token surfaces instead of looking like a quiet day.
 
-For that to mean anything, a source that can *never* work should be
-disabled rather than left to report "not checked" every run — otherwise the
-exit code sits at `1` permanently and stops distinguishing a healthy run
-from a broken one. On Windows this is what `LastTaskResult` shows, so it is
-the only health signal the scheduler gives you.
+**Unavailable is not the same as broken.** A source that is not configured,
+or switched off on the Page — visitor posts, typically — reports the same
+thing forever. Those appear under "Not checked" in the digest but do **not**
+set a failure code, because an exit code pinned to `1` cannot distinguish a
+healthy run from a broken one. Only a genuine error does: a dead token, a
+refused call, a token nearing expiry. On Windows this is what
+`LastTaskResult` shows, and it is the only health signal the scheduler
+gives you.
 
 ### Scheduling
 

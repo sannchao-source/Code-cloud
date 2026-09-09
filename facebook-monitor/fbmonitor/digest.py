@@ -29,7 +29,7 @@ def render_text(report: Report, *, width: int = 78) -> str:
         leads = report.total_flagged - report.total_complaints
         lines.append(f"⚠  {leads} unanswered question(s)")
 
-    if report.total_new == 0 and not report.has_problems:
+    if report.total_new == 0 and not report.has_unavailable_sources:
         lines.append("")
         lines.append("Nothing new since the last check.")
         return "\n".join(lines)

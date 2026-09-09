@@ -922,6 +922,54 @@ class TestTokenExpiryWarning(unittest.TestCase):
         self.assertIn("expires in 2 days", second.warnings[0])
 
 
+class TestExitCodeMeansSomething(unittest.TestCase):
+    """Unavailable is not the same as broken.
+
+    Visitor posts are switched off on both Pages and Instagram is not
+    granted -- standing facts that report identically forever. Counting
+    those as failures pinned the exit code to 1 permanently, so it could no
+    longer distinguish a healthy run from a broken one. On Windows that code
+    is LastTaskResult, the only health signal the scheduler gives you.
+    """
+
+    def _report(self, **kwargs):
+        ar = AccountReport(account=account())
+        ar.results = [CollectionResult(kind=KIND_PAGE_COMMENT,
+                                       account="test-co", **kwargs)]
+        return Report(accounts=[ar])
+
+    def test_an_unavailable_source_is_not_a_failure(self):
+        report = self._report(
+            skipped_reason="visitor posts unavailable -- turned off on the Page")
+        self.assertFalse(report.has_problems,
+                         "a switched-off feature must not read as unhealthy")
+
+    def test_an_unavailable_source_is_still_shown(self):
+        # Not a failure, but the operator should still see the gap.
+        report = self._report(skipped_reason="no instagram_user_id configured")
+        self.assertTrue(report.has_unavailable_sources)
+        self.assertIn("Not checked", render_text(report))
+
+    def test_a_real_error_is_a_failure(self):
+        report = self._report(error="(#190) Access token has expired")
+        self.assertTrue(report.has_problems)
+
+    def test_a_missing_token_is_a_failure(self):
+        ar = AccountReport(account=account())
+        ar.fatal = "no token -- set $ROB_PAGE_TOKEN"
+        self.assertTrue(Report(accounts=[ar]).has_problems)
+
+    def test_an_expiring_token_is_a_failure(self):
+        report = Report(warnings=["the ads token expires in 3 days"])
+        self.assertTrue(report.has_problems)
+
+    def test_a_clean_run_with_a_standing_gap_exits_zero(self):
+        # The exact case on the live box: nothing new, visitor posts off.
+        report = self._report(skipped_reason="visitor posts unavailable")
+        self.assertEqual(report.total_new, 0)
+        self.assertFalse(report.has_problems)
+
+
 class TestStandingProblemsAreNotRepeated(unittest.TestCase):
     """A fault that recurs unchanged must be announced once, not forever.
 

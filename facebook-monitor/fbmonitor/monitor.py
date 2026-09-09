@@ -46,7 +46,21 @@ class AccountReport:
 
     @property
     def problems(self) -> list[CollectionResult]:
+        """Everything not read this run, for display in the digest."""
         return [r for r in self.results if r.error or r.skipped_reason]
+
+    @property
+    def failures(self) -> list[CollectionResult]:
+        """Only what actually broke.
+
+        A source that is unavailable -- not configured, or switched off on
+        the Page -- is a standing fact, not a fault, and reports identically
+        forever. Counting those as failures pinned the exit code to 1
+        permanently, and an exit code that never changes cannot tell a
+        healthy run from a broken one. On Windows that code is
+        LastTaskResult, the only health signal the scheduler exposes.
+        """
+        return [r for r in self.results if r.error]
 
 
 @dataclass
@@ -70,8 +84,14 @@ class Report:
 
     @property
     def has_problems(self) -> bool:
+        """Whether this run should be treated as unhealthy."""
         return bool(self.warnings) or any(
-            a.fatal or a.problems for a in self.accounts)
+            a.fatal or a.failures for a in self.accounts)
+
+    @property
+    def has_unavailable_sources(self) -> bool:
+        """Sources that could not be read, fault or not -- for the digest."""
+        return any(a.fatal or a.problems for a in self.accounts)
 
 
 def run(
