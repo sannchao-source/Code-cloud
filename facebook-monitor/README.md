@@ -374,6 +374,28 @@ names, and a single underscore in one would make Telegram reject the whole
 message as malformed — losing a complaint entirely. A plain message that
 arrives beats a formatted one that does not.
 
+#### API call volume
+
+Meta blocks an app that makes too many calls, and a blocked app reports
+every source as failing — so staying inside the limits is a correctness
+requirement, not an optimisation.
+
+The first version read every ad post on every run: at 60 posts per
+placement across three ad accounts every fifteen minutes, roughly **1,500
+calls an hour** from an app created the day before. Meta blocked its API
+access within a day. Three changes bound it to around **230 an hour**:
+
+- **Only ACTIVE ads.** A paused ad is not being served, so its comments are
+  shown to nobody new — which is the whole reason to watch ad comments.
+- **A fixed budget per run** (`MAX_COMMENT_CALLS`), with posts rotated
+  through it, so the cost does not grow with the number of ads ever run.
+- **Stop on a throttle.** Graph signals rate limiting in the error body with
+  an HTTP 200, so retrying looks like ignoring it. The run abandons its
+  remaining posts and leaves them for next time.
+
+If you add ad accounts or shorten the interval, recheck this. The arithmetic
+is in the commit that introduced the cap.
+
 #### How often
 
 Every 15 minutes is the gap between a hostile comment appearing under a

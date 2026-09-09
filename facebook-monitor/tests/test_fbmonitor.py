@@ -37,9 +37,11 @@ class FakeGraph:
         self.responses = responses
         self.errors = errors or {}
         self.calls: list[str] = []
+        self.last_params: dict[str, dict] = {}
 
     def get(self, path, params=None):
         self.calls.append(path)
+        self.last_params[path] = dict(params or {})
         if path in self.errors:
             raise self.errors[path]
         return self.responses.get(path, {"data": []})
@@ -255,6 +257,90 @@ class TestAdComments(unittest.TestCase):
         result = collect_ad_comments(graph, account(facebook_page_id="100"))
         self.assertTrue(result.ok)
         self.assertIn("could not be read", result.skipped_reason)
+
+
+class TestCallVolumeIsBounded(unittest.TestCase):
+    """Reading every ad post every run got this app's API access blocked.
+
+    At 60 posts per placement across three ad accounts every fifteen
+    minutes, the design issued roughly 1,500 Graph calls an hour from an app
+    created the day before. Meta blocked it. The work per run must therefore
+    be bounded regardless of how many ads have ever run.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state = State(Path(self.dir.name) / "state.json")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _graph_with(self, n_posts):
+        ads = [{"id": f"a{i}", "name": f"Ad {i}",
+                "creative": {"effective_object_story_id": f"100_{i}"}}
+               for i in range(n_posts)]
+        responses = {"act_300/ads": {"data": ads}}
+        for i in range(n_posts):
+            responses[f"100_{i}/comments"] = {"data": []}
+        return FakeGraph(responses)
+
+    def test_calls_are_capped_however_many_ads_exist(self):
+        from fbmonitor.collectors.ads import MAX_COMMENT_CALLS
+        graph = self._graph_with(200)
+        collect_ad_comments(graph, account(facebook_page_id="100"),
+                            state=self.state)
+        comment_calls = [c for c in graph.calls if c.endswith("/comments")]
+        self.assertLessEqual(len(comment_calls), MAX_COMMENT_CALLS)
+
+    def test_successive_runs_walk_through_the_rest(self):
+        # Capping alone would mean posts past the cap were never checked.
+        seen = set()
+        for _ in range(4):
+            graph = self._graph_with(50)
+            collect_ad_comments(graph, account(facebook_page_id="100"),
+                                state=self.state)
+            seen.update(c for c in graph.calls if c.endswith("/comments"))
+        self.assertGreater(len(seen), 20,
+                           "the rotation must reach posts beyond the cap")
+
+    def test_the_cursor_wraps_rather_than_running_off_the_end(self):
+        for _ in range(10):
+            graph = self._graph_with(5)
+            result = collect_ad_comments(
+                graph, account(facebook_page_id="100"), state=self.state)
+            self.assertTrue(result.ok)
+
+    def test_paused_ads_are_not_requested(self):
+        # A paused ad is not being served, so its comments are shown to
+        # nobody new -- the entire reason for watching ad comments.
+        graph = self._graph_with(1)
+        collect_ad_comments(graph, account(facebook_page_id="100"),
+                            state=self.state)
+        params = graph.last_params.get("act_300/ads", {})
+        self.assertEqual(params.get("effective_status"), '["ACTIVE"]')
+
+    def test_throttling_stops_the_run_instead_of_pushing_through(self):
+        # Continuing after Graph says slow down is what turns a temporary
+        # limit into a blocked app.
+        graph = FakeGraph(
+            {"act_300/ads": {"data": [
+                {"id": f"a{i}", "name": "x", "creative": {
+                    "effective_object_story_id": f"100_{i}"}} for i in range(10)]}},
+            errors={f"100_{i}/comments": GraphError("slow down", code=4)
+                    for i in range(10)},
+        )
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertTrue(result.rate_limited)
+        self.assertEqual(
+            len([c for c in graph.calls if c.endswith("/comments")]), 1,
+            "must stop at the first throttle, not keep trying")
+        self.assertIn("rate-limited", result.skipped_reason)
+
+    def test_a_rate_limit_code_is_recognised(self):
+        for code in (4, 17, 32, 613):
+            self.assertTrue(GraphError("x", code=code).is_rate_limited,
+                            f"code {code} is a Graph throttle")
 
 
 class TestPartialAdFailureIsReported(unittest.TestCase):

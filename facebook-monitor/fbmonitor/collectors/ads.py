@@ -30,13 +30,19 @@ log = logging.getLogger(__name__)
 
 AD_LIMIT = 50
 COMMENT_LIMIT = 50
-# Reading comments costs one call per distinct story. Ads share creatives
-# heavily, so this covers far more than 60 ads.
-MAX_STORIES = 60
+
+# Reading comments costs one Graph call per ad post, every run. Checking
+# every post on every run put this app past 1,500 calls an hour, which got
+# its API access blocked outright -- so the budget is now fixed and the
+# posts are rotated through it.
+#
+# A full cycle at 20 per run covers ~80 posts within an hour, which is well
+# inside the window that matters for a comment sitting under a live ad.
+MAX_COMMENT_CALLS = 20
 
 
 def collect_ad_comments(client: GraphClient, account, page_client=None,
-                        **_) -> CollectionResult:
+                        state=None, **_) -> CollectionResult:
     """Two tokens, because the two halves need different ones.
 
     Listing an ad account needs ads_read, which is a user-level permission.
@@ -81,8 +87,16 @@ def collect_ad_comments(client: GraphClient, account, page_client=None,
     # reporting on every run forever.
     ours, theirs = _split_by_page(fb_stories, account.facebook_page_id)
 
-    fb_unreadable = _read_facebook(reader, account, ours, result)
-    ig_unreadable = _read_instagram(reader, account, ig_media, result)
+    # Rotate through the posts rather than reading all of them every run.
+    fb_slice, ig_slice, next_cursor = _rotate(
+        ours, ig_media,
+        cursor=state.ad_cursor(account.slug) if state else 0,
+        budget=MAX_COMMENT_CALLS)
+    if state:
+        state.set_ad_cursor(account.slug, next_cursor)
+
+    fb_unreadable = _read_facebook(reader, account, fb_slice, result)
+    ig_unreadable = _read_instagram(reader, account, ig_slice, result)
 
     # A partial failure must be reported even when some comments did come
     # back. Reporting "3 new" while silently failing on 20 other ad posts
@@ -91,18 +105,44 @@ def collect_ad_comments(client: GraphClient, account, page_client=None,
     notes = list(problems)
     if fb_unreadable:
         notes.append(
-            f"{fb_unreadable} of {len(ours)} Facebook ad post(s) on this Page "
-            "could not be read")
+            f"{fb_unreadable} of {len(fb_slice)} Facebook ad post(s) checked "
+            "this run could not be read")
     if ig_unreadable and not any(
             i.extra.get("placement") == "instagram" for i in result.items):
         notes.append(
             f"none of the {ig_unreadable} Instagram ad post(s) could be read "
             "-- Instagram comment access may not be granted")
+    if result.rate_limited:
+        notes.append("Graph rate-limited this run -- the remaining ad posts "
+                     "were left for the next one")
     if theirs:
         log.debug("skipped %d ad post(s) belonging to another Page", theirs)
     if notes:
         result.skipped_reason = "; ".join(notes)
     return result
+
+
+def _rotate(fb: dict[str, str], ig: dict[str, str], *, cursor: int,
+            budget: int):
+    """Take the next `budget` posts, continuing where the last run stopped.
+
+    Reading every ad post on every run is what triggered the rate block.
+    Posts are ordered deterministically and walked in a loop, so each one is
+    still checked regularly without the call count growing with the number
+    of ads ever run.
+    """
+    ordered = ([("fb", sid, name) for sid, name in sorted(fb.items())]
+               + [("ig", sid, name) for sid, name in sorted(ig.items())])
+    if not ordered:
+        return {}, {}, 0
+
+    cursor = cursor % len(ordered)
+    taken = [ordered[(cursor + n) % len(ordered)]
+             for n in range(min(budget, len(ordered)))]
+
+    fb_slice = {sid: name for kind, sid, name in taken if kind == "fb"}
+    ig_slice = {sid: name for kind, sid, name in taken if kind == "ig"}
+    return fb_slice, ig_slice, (cursor + len(taken)) % len(ordered)
 
 
 def _split_by_page(stories: dict[str, str], page_id: str | None):
@@ -125,7 +165,11 @@ def _creatives_for(client: GraphClient, ad_account_id: str) -> list[dict]:
             # Paused ads keep collecting comments on their post, and those
             # comments stay visible, so they are still worth reading.
             # Archived and deleted ads are not.
-            "effective_status": '["ACTIVE","PAUSED"]',
+            # ACTIVE only. A paused ad is not being served, so its
+            # comments are not being shown to anyone new -- which is the
+            # entire reason ad comments are worth watching. Including
+            # paused ads multiplied the call volume for no benefit.
+            "effective_status": '["ACTIVE"]',
             "limit": AD_LIMIT,
         },
         max_pages=2,
@@ -153,7 +197,7 @@ def _merge_targets(ads: list[dict], fb_stories: dict, ig_media: dict) -> None:
 def _read_facebook(client, account, stories: dict[str, str],
                    result: CollectionResult) -> int:
     unreadable = 0
-    for story_id, ad_name in list(stories.items())[:MAX_STORIES]:
+    for story_id, ad_name in stories.items():
         try:
             comments = list(client.paginate(
                 f"{story_id}/comments",
@@ -165,6 +209,12 @@ def _read_facebook(client, account, stories: dict[str, str],
                 max_pages=1,
             ))
         except GraphError as exc:
+            if exc.is_rate_limited:
+                # Stop immediately. Continuing after being throttled is what
+                # escalates a temporary limit into a blocked app.
+                log.warning("rate limited; abandoning the rest of this run")
+                result.rate_limited = True
+                break
             # One unreadable story must not sink the collector; a creative
             # referencing another Page's post is a normal case.
             unreadable += 1
@@ -193,7 +243,7 @@ def _read_facebook(client, account, stories: dict[str, str],
 def _read_instagram(client, account, media: dict[str, str],
                     result: CollectionResult) -> int:
     unreadable = 0
-    for media_id, ad_name in list(media.items())[:MAX_STORIES]:
+    for media_id, ad_name in media.items():
         try:
             comments = list(client.paginate(
                 f"{media_id}/comments",
@@ -201,6 +251,10 @@ def _read_instagram(client, account, media: dict[str, str],
                 max_pages=1,
             ))
         except GraphError as exc:
+            if exc.is_rate_limited:
+                log.warning("rate limited; abandoning the rest of this run")
+                result.rate_limited = True
+                break
             unreadable += 1
             log.debug("skipping IG comments for %s: %s", media_id, exc)
             continue
