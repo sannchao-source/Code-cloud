@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 from .config import ConfigError, load_accounts
 from .digest import render_json, render_text
+from . import notify
 from .monitor import run
 from .models import KIND_ORDER
 from .state import State
@@ -39,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "seen, so the next real run still reports it")
     parser.add_argument("--api-version", default=None,
                         help="Graph API version, e.g. v21.0")
+    parser.add_argument("--notify", action="store_true",
+                        help="post the digest to the chat webhook in "
+                             "$FBMONITOR_WEBHOOK_URL, but only when there is "
+                             "something new or something broke")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 
@@ -80,9 +86,30 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(render_text(report))
 
+    if args.notify:
+        _notify(report)
+
     # Exit 1 when something could not be checked, so a scheduled run can
     # surface a broken token instead of looking like a quiet day.
     return 1 if report.has_problems else 0
+
+
+def _notify(report) -> None:
+    """Post to chat. A delivery failure must not lose the digest, which has
+    already been printed by the time we get here."""
+    url = os.environ.get("FBMONITOR_WEBHOOK_URL", "")
+    if not url:
+        print("--notify given but $FBMONITOR_WEBHOOK_URL is not set",
+              file=sys.stderr)
+        return
+    if not notify.should_send(report):
+        return
+    try:
+        notify.send(report, url)
+    except notify.NotifyError as exc:
+        print(f"chat delivery failed: {exc}", file=sys.stderr)
+    else:
+        print(f"posted to {notify.describe_target(url)}", file=sys.stderr)
 
 
 if __name__ == "__main__":

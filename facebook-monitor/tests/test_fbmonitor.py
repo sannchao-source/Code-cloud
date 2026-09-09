@@ -22,11 +22,11 @@ from fbmonitor.collectors.instagram import collect_instagram_comments
 from fbmonitor.config import Account, ConfigError, load_accounts
 from fbmonitor.digest import render_json, render_text
 from fbmonitor.graph import GraphClient, GraphError
-from fbmonitor import triage
+from fbmonitor import notify, triage
 from fbmonitor.models import (KIND_AD_COMMENT, KIND_ORDER,
                              KIND_PAGE_COMMENT, Item, parse_time)
 from fbmonitor.models import CollectionResult
-from fbmonitor.monitor import AccountReport, run
+from fbmonitor.monitor import AccountReport, Report, run
 from fbmonitor.state import State
 
 
@@ -566,6 +566,103 @@ class TestErrorsDoNotLeakTokens(unittest.TestCase):
             client.get("100/posts", {"limit": 1})
         self.assertNotIn("SUPERSECRET", ctx.exception.path)
         self.assertNotIn("SUPERSECRET", str(ctx.exception))
+
+
+class TestChatNotification(unittest.TestCase):
+    def _report(self, items=(), fatal=None, error=None):
+        ar = AccountReport(account=account(name="Republic of Barbers"))
+        ar.fatal = fatal
+        ar.results = [CollectionResult(
+            kind=KIND_AD_COMMENT, account="test-co",
+            items=triage.apply(list(items)), error=error)]
+        return Report(accounts=[ar])
+
+    def _item(self, text):
+        return Item(kind=KIND_AD_COMMENT, id="i1", account="test-co",
+                    created_time=datetime(2026, 9, 9, tzinfo=timezone.utc),
+                    author="Someone", text=text)
+
+    def test_stays_silent_when_nothing_is_new(self):
+        # A channel that pings every 15 minutes with "no change" gets muted,
+        # and a muted channel is worse than none.
+        self.assertFalse(notify.should_send(self._report()))
+
+    def test_speaks_when_there_is_something_new(self):
+        self.assertTrue(notify.should_send(self._report([self._item("hi")])))
+
+    def test_speaks_when_a_source_broke(self):
+        # A dead token must not read as a quiet day.
+        self.assertTrue(notify.should_send(self._report(error="token expired")))
+        self.assertTrue(notify.should_send(self._report(fatal="no token")))
+
+    def test_stays_silent_for_a_merely_unconfigured_source(self):
+        # skipped_reason repeats identically forever; it is not news.
+        ar = AccountReport(account=account())
+        ar.results = [CollectionResult(
+            kind=KIND_AD_COMMENT, account="test-co",
+            skipped_reason="no instagram_user_id configured")]
+        self.assertFalse(notify.should_send(Report(accounts=[ar])))
+
+    def test_complaint_leads_the_message(self):
+        report = self._report([self._item("absolute rip off, avoid")])
+        message = notify.render_chat(report)
+        self.assertTrue(message.startswith("🚨"), message[:40])
+        self.assertIn("possible complaint", message)
+
+    def test_message_is_capped_for_discord(self):
+        many = [Item(kind=KIND_AD_COMMENT, id=f"i{n}", account="test-co",
+                     created_time=datetime(2026, 9, 9, tzinfo=timezone.utc),
+                     author=f"Person {n}", text="x" * 200) for n in range(60)]
+        message = notify.render_chat(self._report(many))
+        self.assertLessEqual(len(message), notify.MAX_MESSAGE + 40)
+        self.assertIn("truncated", message)
+
+    def test_uses_the_field_name_each_provider_expects(self):
+        discord, _ = notify._payload_for(
+            "https://discord.com/api/webhooks/1/abc", "hello")
+        slack, _ = notify._payload_for(
+            "https://hooks.slack.com/services/T/B/x", "hello")
+        self.assertEqual(discord, {"content": "hello"})
+        self.assertEqual(slack, {"text": "hello"})
+
+    def test_reports_a_rejected_post(self):
+        class Rejecting:
+            @staticmethod
+            def post(url, json=None, timeout=None):
+                class Resp:
+                    status_code = 404
+                    text = "no such webhook"
+                return Resp()
+
+        with self.assertRaises(notify.NotifyError) as ctx:
+            notify.send(self._report([self._item("hi")]),
+                        "https://discord.com/api/webhooks/1/abc",
+                        session=Rejecting())
+        self.assertIn("404", str(ctx.exception))
+
+    def test_accepts_discords_empty_204(self):
+        posted = {}
+
+        class Accepting:
+            @staticmethod
+            def post(url, json=None, timeout=None):
+                posted["body"] = json
+
+                class Resp:
+                    status_code = 204
+                    text = ""
+                return Resp()
+
+        notify.send(self._report([self._item("hi")]),
+                    "https://discord.com/api/webhooks/1/abc",
+                    session=Accepting())
+        self.assertIn("content", posted["body"])
+
+    def test_describes_target_without_leaking_the_secret_path(self):
+        described = notify.describe_target(
+            "https://discord.com/api/webhooks/123/SECRETTOKEN")
+        self.assertEqual(described, "Discord")
+        self.assertNotIn("SECRETTOKEN", described)
 
 
 class TestGraphClientIsReadOnly(unittest.TestCase):

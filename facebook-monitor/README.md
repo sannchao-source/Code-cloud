@@ -269,12 +269,44 @@ files of its own.
   ./.venv/bin/python -m fbmonitor >> digest.txt 2>&1
 ```
 
-#### On Windows
+#### On Windows (the NUC)
 
-Task Scheduler, running `.venv\Scripts\python.exe -m fbmonitor` every 15
-minutes, with the working directory set to the checkout. Load the tokens as
-user environment variables rather than from `.env`, or use a wrapper `.bat`
-that sets them.
+Open PowerShell **as Administrator** in the checkout, then:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\deploy\install.ps1
+```
+
+That creates a virtualenv, installs dependencies, restricts `.env` to your
+user with `icacls`, and registers a Scheduled Task running every 15 minutes.
+Safe to re-run.
+
+```powershell
+Start-ScheduledTask -TaskName FacebookMonitor          # run it now
+Get-ScheduledTask -TaskName FacebookMonitor | Get-ScheduledTaskInfo
+Get-Content .\digest.txt -Tail 40                      # recent digests
+.\deploy\run.ps1 -Preview                              # look without consuming
+```
+
+The task is set `-StartWhenAvailable`, so a run missed while the machine was
+off happens on return rather than being skipped.
+
+### Getting the digest to a human
+
+A digest on a machine nobody logs into is not a monitor. With `--notify`
+(which both installers pass), each run posts to the Slack, Discord or
+Telegram webhook in `$FBMONITOR_WEBHOOK_URL`.
+
+It is deliberately quiet: **a run with nothing new posts nothing at all.** A
+channel that pings every fifteen minutes with "no change" gets muted within
+a day, and a muted channel is worse than no channel. It speaks when there
+are new items, or when a source broke — a dead token must not read as a
+quiet day. A source that is merely unconfigured never triggers a post,
+since it would report identically forever.
+
+Complaints lead the message, and it is capped to fit Discord's 2000-character
+limit; `digest.txt` always holds the full detail.
 
 #### How often
 

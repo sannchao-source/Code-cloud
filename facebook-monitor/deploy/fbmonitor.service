@@ -11,7 +11,7 @@ User=@USER@
 WorkingDirectory=@APP_DIR@
 # Page tokens live here, read only by this unit.
 EnvironmentFile=@APP_DIR@/.env
-ExecStart=@APP_DIR@/.venv/bin/python -m fbmonitor --format text
+ExecStart=@APP_DIR@/.venv/bin/python -m fbmonitor --format text --notify
 # The digest goes to a file for reading at a glance, and to the journal so
 # there is a timestamped history of every run.
 StandardOutput=append:@APP_DIR@/digest.txt
