@@ -1,0 +1,98 @@
+# Copy to accounts.yaml and fill in the token_env names. No tokens live in
+# this file — each account names an environment variable, read at run time.
+#
+# Both Pages below sit in the "Republic Of Barbers" business portfolio
+# (835665240453786), so one Meta app connected to that portfolio covers
+# both.
+#
+# The IDs were verified against live Meta data: each ad account was checked
+# for which Page it actually promotes, rather than inferred from its name.
+# Do not trust the names here — "ROB Marketing Agency" advertises a Page
+# that has nothing to do with Republic of Barbers.
+
+accounts:
+  - name: Republic of Barbers
+    slug: republic-of-barbers
+    token_env: ROB_PAGE_TOKEN
+    # Ad accounts are not Page objects. ads_read is a user-level permission,
+    # so a Page token gets "(#100) Unsupported get request" against
+    # /act_<id>/ads -- reaching ad comments needs a long-lived USER token.
+    # Both businesses can share one, since it is scoped to your user.
+    ads_token_env: FB_ADS_USER_TOKEN
+    facebook_page_id: "106828815133188"
+    # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
+    ad_account_ids:
+      - "3178575389134669"   # Republic Of Barbers — live (Fresha service ads)
+      - "1192428111245965"   # Rob Barbers — live (boosted FB + IG posts)
+
+    # Direct messages are switched off deliberately. They are private, so
+    # a bad one costs nothing publicly and the owner reads them directly.
+    # What is alerted here is only what a stranger can see: comments on
+    # live ads above all, then Page comments, visitor posts and
+    # recommendations. Delete a line to switch that source back on.
+    disabled_sources:
+      - messenger_dm
+      - instagram_dm
+      # Instagram post comments are off because they cannot work at all:
+      # Meta's current app model did not offer instagram_basic, without
+      # which the Page's Instagram account cannot even be resolved. Left on,
+      # it would spend calls every 15 minutes to learn that again.
+      # Re-enable if instagram_basic is ever granted. Instagram comments on
+      # ADS are unaffected and still read -- those come from the ad
+      # creative, not the Page's Instagram account.
+      - instagram_comment
+
+
+  - name: Raising Thinkers
+    slug: raising-thinkers
+    token_env: RAISING_THINKERS_PAGE_TOKEN
+    ads_token_env: FB_ADS_USER_TOKEN
+    facebook_page_id: "1059125853953466"
+    # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
+    ad_account_ids:
+      - "548901053966634"    # SC - Marketing — live (Vid/Image campaign)
+
+    # Direct messages are switched off deliberately. They are private, so
+    # a bad one costs nothing publicly and the owner reads them directly.
+    # What is alerted here is only what a stranger can see: comments on
+    # live ads above all, then Page comments, visitor posts and
+    # recommendations. Delete a line to switch that source back on.
+    disabled_sources:
+      - messenger_dm
+      - instagram_dm
+      # Instagram post comments are off because they cannot work at all:
+      # Meta's current app model did not offer instagram_basic, without
+      # which the Page's Instagram account cannot even be resolved. Left on,
+      # it would spend calls every 15 minutes to learn that again.
+      # Re-enable if instagram_basic is ever granted. Instagram comments on
+      # ADS are unaffected and still read -- those come from the ad
+      # creative, not the Page's Instagram account.
+      - instagram_comment
+
+
+# Notes on what is deliberately not here:
+#
+# Ad account 1192428111245965 also runs ads for a Page outside this scope.
+# Those ads' comments are simply skipped: the Page token cannot read posts
+# belonging to another Page, and a partial read is not treated as a failure.
+#
+# Ad accounts confirmed to have never run an ad, so excluded rather than
+# costing API calls on every run:
+#   909159656936045  SC1 - Marketing Agency
+#   724406129355682  SC2 - Marketing Agency
+#   3510831575863044 RC - Agency
+#   1216084909005293 RC - Marketing 2
+#
+# Could not be checked; add them if you know they advertise either Page:
+#   721934336045857  SC3 - Marketing Agency  (not enabled for the Ads MCP)
+#   869845057383261  Richard Marketing       (account status UNSETTLED)
+#
+# Out of scope by choice — other businesses, not monitored:
+#   117731341219971  Fitfable                    (ROB Marketing Agency)
+#   110554632011417  Beyond Bricks And Mortar    (Richards Marketing)
+#   107819122193620  Solutions Engineering Team  (Republic Of Barbers)
+#
+# Per-account opt-outs. One or more of: ad_comment, messenger_dm,
+# instagram_dm, review, visitor_post, page_comment, instagram_comment
+#   disabled_sources:
+#     - instagram_dm

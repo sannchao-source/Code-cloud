@@ -1,0 +1,34 @@
+[Unit]
+Description=Read new Facebook/Instagram comments, DMs and ad comments
+Documentation=file://@APP_DIR@/README.md
+# No point running with no network; the timer will retry on the next tick.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@APP_DIR@
+# Page tokens live here, read only by this unit.
+EnvironmentFile=@APP_DIR@/.env
+ExecStart=@APP_DIR@/.venv/bin/python -m fbmonitor --format text --notify
+# The digest goes to a file for reading at a glance, and to the journal so
+# there is a timestamped history of every run.
+StandardOutput=append:@APP_DIR@/digest.txt
+StandardError=journal
+
+# The monitor only ever reads a remote API and writes two files of its own,
+# so it has no business touching the rest of the box.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@APP_DIR@
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# A hung DNS lookup must not wedge the timer.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
