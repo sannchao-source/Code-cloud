@@ -50,7 +50,7 @@ def load_accounts(path: str | Path) -> list[Account]:
             f"no config at {path} -- copy accounts.example.yaml and fill it in")
 
     try:
-        raw = yaml.safe_load(path.read_text()) or {}
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"{path} is not valid YAML: {exc}") from exc
 

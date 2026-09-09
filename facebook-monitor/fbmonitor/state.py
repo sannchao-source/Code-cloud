@@ -32,8 +32,8 @@ class State:
         if not self.path.exists():
             return {"version": 1, "accounts": {}}
         try:
-            data = json.loads(self.path.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             # A corrupt state file must not wedge the tool. Start clean and
             # accept one noisy run rather than failing every run from here on.
             log.warning("state file %s unreadable (%s); starting fresh",
@@ -99,7 +99,7 @@ class State:
         # one, never a half-written mixture.
         fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as handle:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(self._data, handle, indent=2, sort_keys=True)
             os.replace(tmp, self.path)
         except BaseException:

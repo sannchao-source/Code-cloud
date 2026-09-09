@@ -386,7 +386,7 @@ class TestState(unittest.TestCase):
         self.assertTrue(reloaded.is_new("test-co", KIND_PAGE_COMMENT, "z"))
 
     def test_corrupt_state_file_does_not_crash(self):
-        self.path.write_text("{ this is not json")
+        self.path.write_text("{ this is not json", encoding="utf-8")
         state = State(self.path)
         self.assertTrue(state.is_new("test-co", KIND_PAGE_COMMENT, "a"))
 
@@ -568,6 +568,59 @@ class TestErrorsDoNotLeakTokens(unittest.TestCase):
         self.assertNotIn("SUPERSECRET", str(ctx.exception))
 
 
+class TestWindowsEncoding(unittest.TestCase):
+    """Windows defaults to cp1252, not UTF-8.
+
+    Every one of these was a real failure found by running on the target
+    machine rather than the machine the code was written on.
+    """
+
+    PACKAGE = Path(__file__).resolve().parent.parent / "fbmonitor"
+
+    def test_no_file_io_without_an_explicit_encoding(self):
+        # config.py read accounts.yaml with the locale encoding. The shipped
+        # accounts.example.yaml contains an em-dash, so on Windows the tool
+        # refused to start with a misleading config error.
+        offenders = []
+        for source in self.PACKAGE.rglob("*.py"):
+            for number, line in enumerate(
+                    source.read_text(encoding="utf-8").splitlines(), 1):
+                if "encoding=" in line or line.lstrip().startswith("#"):
+                    continue
+                if ("read_text()" in line or "write_text(" in line
+                        or "fdopen(" in line):
+                    offenders.append(f"{source.name}:{number}")
+        self.assertEqual(offenders, [],
+                         "file I/O must name its encoding, or Windows uses cp1252")
+
+    def test_digest_survives_a_console_that_cannot_encode_it(self):
+        # The digest marks severity with characters cp1252 has no mapping
+        # for, so printing crashed on exactly the runs that found something.
+        import io
+
+        from fbmonitor.digest import render_text
+
+        item = Item(kind=KIND_AD_COMMENT, id="i1", account="test-co",
+                    created_time=datetime(2026, 9, 9, tzinfo=timezone.utc),
+                    author="Someone", text="absolute rip off")
+        ar = AccountReport(account=account())
+        ar.results = [CollectionResult(kind=KIND_AD_COMMENT, account="test-co",
+                                       items=triage.apply([item]))]
+        text = render_text(Report(accounts=[ar]))
+
+        console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252",
+                                   errors="replace")
+        console.write(text)   # must not raise
+        console.flush()
+
+    def test_shipped_config_is_readable_as_utf8(self):
+        root = self.PACKAGE.parent
+        for name in ("accounts.example.yaml", ".env.example"):
+            path = root / name
+            if path.exists():
+                path.read_text(encoding="utf-8")
+
+
 class TestChatNotification(unittest.TestCase):
     def _report(self, items=(), fatal=None, error=None):
         ar = AccountReport(account=account(name="Republic of Barbers"))
@@ -674,7 +727,7 @@ class TestGraphClientIsReadOnly(unittest.TestCase):
         # And nothing anywhere in the package issues a non-GET request.
         package = Path(__file__).resolve().parent.parent / "fbmonitor"
         for source in package.rglob("*.py"):
-            body = source.read_text()
+            body = source.read_text(encoding="utf-8")
             for verb in ("session.post", "session.put", "session.delete",
                          "requests.post", "requests.put", "requests.delete"):
                 self.assertNotIn(verb, body, f"{source.name} can write to Graph")

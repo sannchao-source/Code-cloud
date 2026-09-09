@@ -49,7 +49,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_output() -> None:
+    """Stop a Windows console killing the run.
+
+    The digest uses ‼, ⚠ and ↳ to mark severity. A default Windows console
+    is cp1252, which cannot encode them, so printing raised
+    UnicodeEncodeError -- and only on runs that actually found something,
+    which is the worst possible time to fail. errors="replace" means a
+    console that genuinely cannot render a glyph shows "?" instead of
+    taking the run down with it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            # Not a real stream (captured in tests, or redirected oddly).
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
