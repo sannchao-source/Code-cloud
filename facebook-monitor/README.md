@@ -174,6 +174,24 @@ pip install -r requirements.txt
    everything the permissions allow. Keep them in `.env`, never in git, and
    never paste them into a chat window or an issue.
 
+   **Graph hides a token in its own responses.** Any paged reply carries a
+   `paging.next` URL with the live `access_token` embedded in the query
+   string:
+
+   ```json
+   "paging": { "next": "https://graph.facebook.com/v26.0/...&access_token=EAAZB8..." }
+   ```
+
+   So a response that looks like harmless IDs is not safe to share. Strip
+   the whole `paging` block before pasting Graph output anywhere. (This is
+   also why `GraphClient` rebuilds the query from that cursor rather than
+   passing the URL through, and why its errors report a path with the query
+   string removed.)
+
+   To revoke a token that has leaked, send `DELETE /me/permissions` for the
+   app. That invalidates every token issued to it; you then re-grant to get
+   a fresh one.
+
 ### 3. Find your IDs
 
 Step 4c above already returns each Page's ID and its linked Instagram
