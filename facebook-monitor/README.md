@@ -170,6 +170,23 @@ pip install -r requirements.txt
       This call also returns each Page's `instagram_business_account`, which
       is the `instagram_user_id` the config wants.
 
+   d. **Keep the long-lived user token from step (b) as well.** Page tokens
+      cover Page content, but they cannot read an ad account: `ads_read` is
+      granted to the *user*, not the Page, so `/act_<id>/ads` with a Page
+      token returns `(#100) Unsupported get request`. That token goes in
+      `FB_ADS_USER_TOKEN` and is what reaches your ad comments.
+
+      It expires after roughly 60 days, unlike the Page tokens. When ad
+      comments begin reporting as "not checked", that is why — repeat step
+      (b) and paste the new value. To avoid the renewal entirely, create a
+      System User in Business settings and use its token, which does not
+      expire.
+
+   **Never run with `--verbose` and share the output.** urllib3 logs each
+   request URL at debug level and Graph carries the token in the query
+   string. The CLI now silences that logger for exactly this reason, but
+   any tool that logs a Graph URL will leak a live credential.
+
    Treat these tokens like passwords. Anyone holding one can read
    everything the permissions allow. Keep them in `.env`, never in git, and
    never paste them into a chat window or an issue.

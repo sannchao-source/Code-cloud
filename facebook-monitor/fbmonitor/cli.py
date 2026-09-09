@@ -74,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    # urllib3 logs each request's full URL at DEBUG, and Graph carries the
+    # access token in the query string -- so --verbose printed live
+    # credentials to the console and into digest.txt. Our own debug lines
+    # carry everything useful for diagnosis without the secret.
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
     try:
         accounts = load_accounts(args.config)

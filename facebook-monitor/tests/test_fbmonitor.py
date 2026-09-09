@@ -50,6 +50,7 @@ class FakeGraph:
 
 def account(**kw):
     base = dict(name="Test Co", slug="test-co", token_env="TEST_TOKEN",
+                ads_token_env=None,
                 facebook_page_id="100", instagram_user_id="200",
                 ad_account_ids=["act_300"])
     base.update(kw)
@@ -566,6 +567,88 @@ class TestErrorsDoNotLeakTokens(unittest.TestCase):
             client.get("100/posts", {"limit": 1})
         self.assertNotIn("SUPERSECRET", ctx.exception.path)
         self.assertNotIn("SUPERSECRET", str(ctx.exception))
+
+
+class TestAdsNeedAUserToken(unittest.TestCase):
+    """A Page token cannot read an ad account.
+
+    ads_read is a user-level permission, so /act_<id>/ads with a Page token
+    returns "(#100) Unsupported get request". The monitor was built assuming
+    one token per business covered everything; it does not, and the symptom
+    was ad comments silently reporting zero -- the one source that matters
+    most failing in the way least likely to be noticed.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state = State(Path(self.dir.name) / "state.json")
+        os.environ["PAGE_TOKEN_T"] = "page-token"
+        os.environ.pop("ADS_TOKEN_T", None)
+
+    def tearDown(self):
+        self.dir.cleanup()
+        os.environ.pop("PAGE_TOKEN_T", None)
+        os.environ.pop("ADS_TOKEN_T", None)
+
+    def test_says_so_when_no_ads_token_is_configured(self):
+        acct = account(token_env="PAGE_TOKEN_T", ads_token_env=None)
+        report = run([acct], self.state, sources=[KIND_AD_COMMENT])
+        problems = report.accounts[0].problems
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Page token cannot read an ad account",
+                      problems[0].skipped_reason)
+        # Naming the fix in the message is the point -- this failure is
+        # otherwise indistinguishable from "you have no ad comments".
+        self.assertIn("ads_token_env", problems[0].skipped_reason)
+
+    def test_ad_collector_gets_the_ads_token_others_get_the_page_token(self):
+        os.environ["ADS_TOKEN_T"] = "ads-token"
+        seen = {}
+
+        def spy(kind):
+            def collect(client, account, **_):
+                seen[kind] = client._token
+                return CollectionResult(kind=kind, account=account.slug)
+            return collect
+
+        acct = account(token_env="PAGE_TOKEN_T", ads_token_env="ADS_TOKEN_T")
+        from fbmonitor import monitor as monitor_module
+        original = dict(monitor_module.COLLECTORS)
+        monitor_module.COLLECTORS.update({
+            KIND_AD_COMMENT: spy(KIND_AD_COMMENT),
+            KIND_PAGE_COMMENT: spy(KIND_PAGE_COMMENT),
+        })
+        try:
+            run([acct], self.state,
+                sources=[KIND_AD_COMMENT, KIND_PAGE_COMMENT])
+        finally:
+            monitor_module.COLLECTORS.clear()
+            monitor_module.COLLECTORS.update(original)
+
+        self.assertEqual(seen[KIND_AD_COMMENT], "ads-token")
+        self.assertEqual(seen[KIND_PAGE_COMMENT], "page-token")
+
+    def test_config_reads_the_ads_token_from_its_own_env_var(self):
+        acct = account(token_env="PAGE_TOKEN_T", ads_token_env="ADS_TOKEN_T")
+        self.assertIsNone(acct.ads_token)
+        os.environ["ADS_TOKEN_T"] = "ads-token"
+        self.assertEqual(acct.ads_token, "ads-token")
+
+
+class TestVerboseDoesNotLeakTokens(unittest.TestCase):
+    def test_urllib3_request_logging_is_suppressed(self):
+        # urllib3 logs each request's full URL at DEBUG, and Graph puts the
+        # access token in the query string -- so --verbose printed live
+        # credentials to the console and into digest.txt.
+        import logging as logging_module
+
+        from fbmonitor.cli import main
+
+        logging_module.getLogger("urllib3").setLevel(logging_module.NOTSET)
+        main(["--config", "/nonexistent-config-for-test.yaml", "--verbose"])
+        self.assertGreaterEqual(
+            logging_module.getLogger("urllib3").level, logging_module.WARNING,
+            "urllib3 must not log request URLs; they carry the access token")
 
 
 class TestWindowsEncoding(unittest.TestCase):

@@ -14,6 +14,11 @@ accounts:
   - name: Republic of Barbers
     slug: republic-of-barbers
     token_env: ROB_PAGE_TOKEN
+    # Ad accounts are not Page objects. ads_read is a user-level permission,
+    # so a Page token gets "(#100) Unsupported get request" against
+    # /act_<id>/ads -- reaching ad comments needs a long-lived USER token.
+    # Both businesses can share one, since it is scoped to your user.
+    ads_token_env: FB_ADS_USER_TOKEN
     facebook_page_id: "106828815133188"
     # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
     ad_account_ids:
@@ -23,6 +28,7 @@ accounts:
   - name: Raising Thinkers
     slug: raising-thinkers
     token_env: RAISING_THINKERS_PAGE_TOKEN
+    ads_token_env: FB_ADS_USER_TOKEN
     facebook_page_id: "1059125853953466"
     # instagram_user_id: "<me/accounts?fields=instagram_business_account>"
     ad_account_ids:

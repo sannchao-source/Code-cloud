@@ -20,7 +20,13 @@ class Account:
 
     name: str
     slug: str
+    # Page token: reads comments, posts, recommendations and DMs.
     token_env: str
+    # A Page token cannot read an ad account -- ads_read is a user-level
+    # permission, so reaching ad comments needs a long-lived USER token as
+    # well. Falls back to token_env, which will fail loudly rather than
+    # silently reporting no ad comments.
+    ads_token_env: str | None = None
     facebook_page_id: str | None = None
     instagram_user_id: str | None = None
     # A business commonly runs ads from several accounts (an in-house one
@@ -34,6 +40,12 @@ class Account:
     @property
     def token(self) -> str | None:
         return os.environ.get(self.token_env) or None
+
+    @property
+    def ads_token(self) -> str | None:
+        if not self.ads_token_env:
+            return None
+        return os.environ.get(self.ads_token_env) or None
 
     def wants(self, kind: str) -> bool:
         return kind not in self.disabled_sources
@@ -98,6 +110,7 @@ def _build(entry: dict, index: int, path: Path) -> Account:
         name=name,
         slug=slug,
         token_env=token_env,
+        ads_token_env=entry.get("ads_token_env"),
         facebook_page_id=page_id,
         instagram_user_id=ig_id,
         ad_account_ids=ad_ids,

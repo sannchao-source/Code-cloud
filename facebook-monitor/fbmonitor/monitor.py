@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from .collectors import COLLECTORS
 from .config import Account
 from .graph import GraphClient
-from .models import KIND_ORDER, CollectionResult, Item
+from .models import KIND_AD_COMMENT, KIND_ORDER, CollectionResult, Item
 from .state import State
 from . import triage
 
@@ -98,12 +98,31 @@ def run(
             continue
 
         client_kwargs = {"api_version": api_version} if api_version else {}
-        client = GraphClient(token, **client_kwargs)
+        page_client = GraphClient(token, **client_kwargs)
+
+        # Ad accounts are not Page objects: ads_read is a user-level
+        # permission, so a Page token gets "(#100) Unsupported get request"
+        # against /act_<id>/ads. Ad comments therefore need a separate,
+        # long-lived user token.
+        ads_token = account.ads_token
+        ads_client = (GraphClient(ads_token, **client_kwargs)
+                      if ads_token else None)
 
         for kind in wanted:
             if not account.wants(kind):
                 continue
+
+            if kind == KIND_AD_COMMENT and ads_client is None:
+                account_report.results.append(CollectionResult(
+                    kind=kind, account=account.slug,
+                    skipped_reason=(
+                        "no ads token -- a Page token cannot read an ad "
+                        f"account. Set ads_token_env for '{account.name}' to a "
+                        "long-lived user token with ads_read")))
+                continue
+
             collector = COLLECTORS[kind]
+            client = ads_client if kind == KIND_AD_COMMENT else page_client
             try:
                 result = collector(client, account)
             except Exception as exc:  # a bug in one collector, not a reason to stop
