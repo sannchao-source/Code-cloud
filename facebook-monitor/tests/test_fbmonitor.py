@@ -1117,6 +1117,58 @@ class TestStandingProblemsAreNotRepeated(unittest.TestCase):
             self.assertEqual(State(path).reported_problems(), "something:broken")
 
 
+class TestCheckTokens(unittest.TestCase):
+    """One dead token makes every source fail, which reads as a dozen
+    unrelated faults. --check-tokens turns that into a single answer."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "accounts.yaml"
+        self.path.write_text(
+            "accounts:\n"
+            "  - name: A\n    token_env: TOK_A\n"
+            "    ads_token_env: TOK_ADS\n    facebook_page_id: 100\n",
+            encoding="utf-8")
+
+        from fbmonitor import cli
+        # Never reach the network from a test.
+        cli.check_tokens_client_factory = lambda token, **kw: FakeGraph(
+            {"me": {"id": "1", "name": "Test Page"}})
+
+    def tearDown(self):
+        from fbmonitor import cli
+        cli.check_tokens_client_factory = None
+        self.dir.cleanup()
+        for name in ("TOK_A", "TOK_ADS"):
+            os.environ.pop(name, None)
+
+    def test_reports_a_missing_token_without_calling_out(self):
+        from fbmonitor.cli import main
+        self.assertEqual(main(["--check-tokens", "--config", str(self.path)]), 1)
+
+    def test_never_prints_a_token(self):
+        import contextlib
+        import io
+
+        from fbmonitor.cli import main
+
+        os.environ["TOK_A"] = "SUPERSECRETVALUE"
+        os.environ["TOK_ADS"] = "ANOTHERSECRET"
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            main(["--check-tokens", "--config", str(self.path)])
+        combined = buf.getvalue() + err.getvalue()
+        self.assertNotIn("SUPERSECRETVALUE", combined)
+        self.assertNotIn("ANOTHERSECRET", combined)
+        # It must still name the variable, or the answer is not actionable.
+        self.assertIn("TOK_A", combined)
+
+    def test_a_bad_config_is_its_own_exit_code(self):
+        from fbmonitor.cli import main
+        self.assertEqual(
+            main(["--check-tokens", "--config", "/nope-does-not-exist.yaml"]), 2)
+
+
 class TestNotifySelfTest(unittest.TestCase):
     """--test-notify proves the alarm works rather than assuming it."""
 

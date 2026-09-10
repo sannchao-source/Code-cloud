@@ -246,6 +246,20 @@ The first real run reports the whole visible backlog, which is noisy once.
 Use `--preview` to see it without consuming it. Every run after that reports
 only what is new, tracked in `state.json`.
 
+When a token dies, **every** source reports as failing, which reads as a
+dozen unrelated faults rather than one cause. `--check-tokens` tests each
+one and names the dead variable, without ever printing a token:
+
+```
+  ROB_PAGE_TOKEN                   OK -> Republic of Barbers est 2021
+  RAISING_THINKERS_PAGE_TOKEN      DEAD (code 190): Error validating token
+  FB_ADS_USER_TOKEN                OK -> Sann Chao
+```
+
+The error code matters: `190` is an expired or revoked token and needs
+regenerating, while `200` with "API access blocked" is Meta restricting the
+app itself, which no amount of new tokens will fix.
+
 Exit codes: `0` clean, `1` something could not be checked (bad token,
 missing scope), `2` config error. A scheduled run can key off `1` so a
 broken token surfaces instead of looking like a quiet day.
@@ -309,6 +323,7 @@ user with `icacls`, and registers a Scheduled Task running every 15 minutes.
 Safe to re-run.
 
 ```powershell
+.\deploy\run.ps1 -CheckTokens                          # which tokens still work
 Start-ScheduledTask -TaskName FacebookMonitor          # run it now
 Get-ScheduledTask -TaskName FacebookMonitor | Get-ScheduledTaskInfo
 Get-Content .\digest.txt -Tail 40                      # recent digests
