@@ -122,6 +122,16 @@ def collect_ad_comments(client: GraphClient, account, page_client=None,
     if result.rate_limited:
         notes.append("Graph rate-limited this run -- the remaining ad posts "
                      "were left for the next one")
+
+    # Rotation is a call-budget measure, not a coverage claim. When there are
+    # more ad posts than the budget, "nothing new" describes only the slice
+    # that was read -- say so, or the digest quietly overstates what it knows.
+    total_posts = len(ours) + len(ig_media)
+    read_posts = len(fb_slice) + len(ig_slice)
+    if read_posts < total_posts:
+        notes.append(
+            f"{read_posts} of {total_posts} ad post(s) read this run "
+            "(call budget); the rest are read on following runs")
     if theirs:
         log.debug("skipped %d ad post(s) belonging to another Page", theirs)
     if notes:

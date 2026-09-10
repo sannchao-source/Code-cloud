@@ -310,6 +310,21 @@ class TestCallVolumeIsBounded(unittest.TestCase):
                 graph, account(facebook_page_id="100"), state=self.state)
             self.assertTrue(result.ok)
 
+    def test_partial_coverage_is_stated_rather_than_implied(self):
+        # "Nothing new" across a slice of the ads is not "nothing new".
+        # Without this the digest reassures about posts it never opened.
+        graph = self._graph_with(200)
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertIn("of 200 ad post(s) read this run",
+                      result.skipped_reason or "")
+
+    def test_full_coverage_is_not_annotated(self):
+        graph = self._graph_with(3)
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertNotIn("call budget", result.skipped_reason or "")
+
     def test_paused_ads_are_not_requested(self):
         # A paused ad is not being served, so its comments are shown to
         # nobody new -- the entire reason for watching ad comments.
