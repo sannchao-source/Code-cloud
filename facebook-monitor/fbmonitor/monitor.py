@@ -152,7 +152,8 @@ def run(
                 # The ad collector lists ads with the user token but must
                 # read comments with the Page token; everything else
                 # ignores the extra argument.
-                result = collector(client, account, page_client=page_client)
+                result = collector(client, account, page_client=page_client,
+                                   state=state)
             except Exception as exc:  # a bug in one collector, not a reason to stop
                 log.exception("collector %s failed for %s", kind, account.slug)
                 result = CollectionResult(
