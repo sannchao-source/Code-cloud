@@ -101,6 +101,16 @@ class State:
     def set_reported_problems(self, signature: str) -> None:
         self._data["reported_problems"] = signature
 
+    # -- ad-post rotation -------------------------------------------------
+
+    def ad_cursor(self, account: str) -> int:
+        """Where the last run stopped walking this account's ad posts."""
+        raw = self._data.setdefault("ad_cursors", {}).get(account, 0)
+        return raw if isinstance(raw, int) and raw >= 0 else 0
+
+    def set_ad_cursor(self, account: str, cursor: int) -> None:
+        self._data.setdefault("ad_cursors", {})[account] = int(cursor)
+
     # -- token expiry checks --------------------------------------------
 
     def due_for_token_check(self, hours: int) -> bool:

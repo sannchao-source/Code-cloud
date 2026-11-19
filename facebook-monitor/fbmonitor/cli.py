@@ -15,6 +15,10 @@ from .models import KIND_ORDER
 from .state import State
 
 
+# Overridden in tests so they never reach the network.
+check_tokens_client_factory = None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fbmonitor",
@@ -45,6 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="post the digest to the chat webhook in "
                              "$FBMONITOR_WEBHOOK_URL, but only when there is "
                              "something new or something broke")
+    parser.add_argument("--check-tokens", action="store_true",
+                        help="test every configured token and report which "
+                             "work, without printing any of them")
     parser.add_argument("--test-notify", action="store_true",
                         help="send a sample alert to the chat webhook and "
                              "exit, to prove delivery works before relying "
@@ -87,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.test_notify:
         return _test_notify()
 
+    if args.check_tokens:
+        return _check_tokens(args.config, args.api_version,
+                             client_factory=check_tokens_client_factory)
+
     try:
         accounts = load_accounts(args.config)
     except ConfigError as exc:
@@ -123,6 +134,61 @@ def main(argv: list[str] | None = None) -> int:
     # Exit 1 when something could not be checked, so a scheduled run can
     # surface a broken token instead of looking like a quiet day.
     return 1 if report.has_problems else 0
+
+
+def _check_tokens(config_path: str, api_version: str | None,
+                  client_factory=None) -> int:
+    """Say which tokens still work, and never print one.
+
+    A dead token makes every source report as failing, which looks like a
+    dozen unrelated faults rather than one cause. Naming the dead token
+    turns that into a single answer.
+    """
+    from .graph import GraphClient, GraphError
+
+    # Injected so the tests never reach the network.
+    build = client_factory or (lambda token, **kw: GraphClient(token, **kw))
+
+    try:
+        accounts = load_accounts(config_path)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    kwargs = {"api_version": api_version} if api_version else {}
+    checked: set[str] = set()
+    failures = 0
+
+    for account in accounts:
+        for label, token in (("page token", account.token),
+                             ("ads token", account.ads_token)):
+            env = (account.token_env if label == "page token"
+                   else account.ads_token_env)
+            if not env or env in checked:
+                continue
+            checked.add(env)
+
+            if not token:
+                print(f"  {env:32} NOT SET")
+                failures += 1
+                continue
+            try:
+                who = build(token, **kwargs).get("me", {"fields": "id,name"})
+            except GraphError as exc:
+                # The code is what distinguishes an expiry from a block, and
+                # they need completely different fixes.
+                code = f" (code {exc.code})" if exc.code else ""
+                print(f"  {env:32} DEAD{code}: {exc}")
+                failures += 1
+            else:
+                print(f"  {env:32} OK -> {who.get('name', who.get('id', '?'))}")
+
+    if failures:
+        print(f"\n{failures} token(s) need attention. Regenerating them is "
+              "step 4 of README.md.", file=sys.stderr)
+        return 1
+    print("\nAll tokens working.")
+    return 0
 
 
 def _test_notify() -> int:

@@ -97,6 +97,9 @@ class CollectionResult:
     # cannot see comments" mean very different things.
     error: str | None = None
     skipped_reason: str | None = None
+    # Set when Graph throttled us mid-collection. Not a fault: the run did
+    # what it could and stopped rather than pushing through a limit.
+    rate_limited: bool = False
 
     @property
     def ok(self) -> bool:

@@ -246,6 +246,20 @@ The first real run reports the whole visible backlog, which is noisy once.
 Use `--preview` to see it without consuming it. Every run after that reports
 only what is new, tracked in `state.json`.
 
+When a token dies, **every** source reports as failing, which reads as a
+dozen unrelated faults rather than one cause. `--check-tokens` tests each
+one and names the dead variable, without ever printing a token:
+
+```
+  ROB_PAGE_TOKEN                   OK -> Republic of Barbers est 2021
+  RAISING_THINKERS_PAGE_TOKEN      DEAD (code 190): Error validating token
+  FB_ADS_USER_TOKEN                OK -> Sann Chao
+```
+
+The error code matters: `190` is an expired or revoked token and needs
+regenerating, while `200` with "API access blocked" is Meta restricting the
+app itself, which no amount of new tokens will fix.
+
 Exit codes: `0` clean, `1` something could not be checked (bad token,
 missing scope), `2` config error. A scheduled run can key off `1` so a
 broken token surfaces instead of looking like a quiet day.
@@ -309,6 +323,7 @@ user with `icacls`, and registers a Scheduled Task running every 15 minutes.
 Safe to re-run.
 
 ```powershell
+.\deploy\run.ps1 -CheckTokens                          # which tokens still work
 Start-ScheduledTask -TaskName FacebookMonitor          # run it now
 Get-ScheduledTask -TaskName FacebookMonitor | Get-ScheduledTaskInfo
 Get-Content .\digest.txt -Tail 40                      # recent digests
@@ -374,14 +389,54 @@ names, and a single underscore in one would make Telegram reject the whole
 message as malformed — losing a complaint entirely. A plain message that
 arrives beats a formatted one that does not.
 
+#### API call volume
+
+Meta blocks an app that makes too many calls, and a blocked app reports
+every source as failing — so staying inside the limits is a correctness
+requirement, not an optimisation.
+
+The first version read every ad post on every run: at 60 posts per
+placement across three ad accounts every fifteen minutes, roughly **1,500
+calls an hour** — 36,000 a day — from an app created the day before. Meta
+blocked its API access within a day.
+
+**The cap and the schedule must be chosen together.** Total calls are
+roughly *(ad posts × runs per day)*, so halving the interval doubles the
+bill:
+
+| Schedule | Calls/day (at `MAX_COMMENT_CALLS = 150`) |
+|---|---|
+| **Twice a day (default)** | **~640** |
+| Hourly | ~7,600 |
+| Every 15 minutes | ~30,000 — this is what got blocked |
+
+Three changes keep it bounded:
+
+- **Only ACTIVE ads.** A paused ad is not being served, so its comments are
+  shown to nobody new — which is the whole reason to watch ad comments.
+- **A fixed budget per run** (`MAX_COMMENT_CALLS`), with posts rotated
+  through it, so the cost does not grow with the number of ads ever run.
+- **Stop on a throttle.** Graph signals rate limiting in the error body with
+  an HTTP 200, so retrying looks like ignoring it. The run abandons its
+  remaining posts and leaves them for next time.
+
+If you add ad accounts or shorten the interval, redo this arithmetic and
+lower `MAX_COMMENT_CALLS` to match.
+
 #### How often
 
-Every 15 minutes is the gap between a hostile comment appearing under a
-live ad and you seeing it, and it sits well inside the rate limits for a
-couple of Pages. Trim it if that is too slow. Below roughly five minutes,
-a Page webhook subscription is the better instrument — but that needs the
-app published and a public HTTPS endpoint, which is a different piece of
-work than a timer.
+The default is **twice a day**, at 07:00 and 19:00.
+
+The gap between checks is the window in which a hostile comment under a
+live ad goes unanswered, so shorter would be better for the monitoring —
+but an app that calls too often gets blocked, and a blocked app sees
+nothing at all. Twice a day is the cadence that survives.
+
+To go faster, lower `MAX_COMMENT_CALLS` proportionally: hourly with a cap
+of 30 lands around the same daily total. Below roughly an hour, polling is
+the wrong instrument altogether — a Page webhook subscription pushes
+comment events within seconds and costs no polling calls, but needs the app
+published and a public HTTPS endpoint.
 
 ## Notes
 

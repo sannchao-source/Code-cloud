@@ -9,7 +9,11 @@
 #   .\deploy\install.ps1
 #
 param(
-    [int]$IntervalMinutes = 15,
+    # Twice a day. Meta blocks an app that calls too often, and a
+    # blocked app reports every source as failing -- so the schedule is
+    # a correctness constraint, not just a preference. Shortening this
+    # means lowering MAX_COMMENT_CALLS to match; see README.md.
+    [int]$IntervalMinutes = 720,
     [string]$TaskName = "FacebookMonitor"
 )
 

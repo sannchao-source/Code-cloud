@@ -3,10 +3,12 @@ Description=Check Facebook/Instagram for new comments and messages
 Documentation=file:///README.md
 
 [Timer]
-# Every 15 minutes. A comment under a live ad is shown to everyone the ad
-# reaches, so the gap between checks is the window in which a hostile one
-# goes unanswered -- trim this if 15 minutes proves too slow.
-OnCalendar=*:0/15
+# Twice a day, at 07:00 and 19:00. The gap between checks is the window in
+# which a hostile comment under a live ad goes unanswered, so shorter is
+# better for the monitoring -- but Meta blocks an app that calls too often,
+# and a blocked app sees nothing at all. Shortening this means lowering
+# MAX_COMMENT_CALLS to match; see "API call volume" in README.md.
+OnCalendar=*-*-* 07,19:00:00
 # The NUC may be asleep or offline at a scheduled tick; run as soon as it
 # is back rather than silently skipping to the next quarter hour.
 Persistent=true

@@ -9,7 +9,9 @@ param(
     [string[]]$Source,
     [switch]$Verbose,
     # Send a sample alert and exit, to prove chat delivery works.
-    [switch]$TestNotify
+    [switch]$TestNotify,
+    # Report which tokens still work, without printing any of them.
+    [switch]$CheckTokens
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +64,7 @@ if (-not (Test-Path $python)) {
 
 $arguments = @("-m", "fbmonitor", "--notify")
 if ($TestNotify) { $arguments = @("-m", "fbmonitor", "--test-notify") }
+if ($CheckTokens) { $arguments = @("-m", "fbmonitor", "--check-tokens") }
 if ($Preview) { $arguments += "--preview" }
 if ($Verbose) { $arguments += "--verbose" }
 foreach ($s in $Source) { $arguments += @("--source", $s) }

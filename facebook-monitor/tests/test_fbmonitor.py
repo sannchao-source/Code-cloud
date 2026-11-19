@@ -37,9 +37,11 @@ class FakeGraph:
         self.responses = responses
         self.errors = errors or {}
         self.calls: list[str] = []
+        self.last_params: dict[str, dict] = {}
 
     def get(self, path, params=None):
         self.calls.append(path)
+        self.last_params[path] = dict(params or {})
         if path in self.errors:
             raise self.errors[path]
         return self.responses.get(path, {"data": []})
@@ -255,6 +257,105 @@ class TestAdComments(unittest.TestCase):
         result = collect_ad_comments(graph, account(facebook_page_id="100"))
         self.assertTrue(result.ok)
         self.assertIn("could not be read", result.skipped_reason)
+
+
+class TestCallVolumeIsBounded(unittest.TestCase):
+    """Reading every ad post every run got this app's API access blocked.
+
+    At 60 posts per placement across three ad accounts every fifteen
+    minutes, the design issued roughly 1,500 Graph calls an hour from an app
+    created the day before. Meta blocked it. The work per run must therefore
+    be bounded regardless of how many ads have ever run.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.state = State(Path(self.dir.name) / "state.json")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _graph_with(self, n_posts):
+        ads = [{"id": f"a{i}", "name": f"Ad {i}",
+                "creative": {"effective_object_story_id": f"100_{i}"}}
+               for i in range(n_posts)]
+        responses = {"act_300/ads": {"data": ads}}
+        for i in range(n_posts):
+            responses[f"100_{i}/comments"] = {"data": []}
+        return FakeGraph(responses)
+
+    def test_calls_are_capped_however_many_ads_exist(self):
+        from fbmonitor.collectors.ads import MAX_COMMENT_CALLS
+        graph = self._graph_with(200)
+        collect_ad_comments(graph, account(facebook_page_id="100"),
+                            state=self.state)
+        comment_calls = [c for c in graph.calls if c.endswith("/comments")]
+        self.assertLessEqual(len(comment_calls), MAX_COMMENT_CALLS)
+
+    def test_successive_runs_walk_through_the_rest(self):
+        # Capping alone would mean posts past the cap were never checked.
+        seen = set()
+        for _ in range(4):
+            graph = self._graph_with(50)
+            collect_ad_comments(graph, account(facebook_page_id="100"),
+                                state=self.state)
+            seen.update(c for c in graph.calls if c.endswith("/comments"))
+        self.assertGreater(len(seen), 20,
+                           "the rotation must reach posts beyond the cap")
+
+    def test_the_cursor_wraps_rather_than_running_off_the_end(self):
+        for _ in range(10):
+            graph = self._graph_with(5)
+            result = collect_ad_comments(
+                graph, account(facebook_page_id="100"), state=self.state)
+            self.assertTrue(result.ok)
+
+    def test_partial_coverage_is_stated_rather_than_implied(self):
+        # "Nothing new" across a slice of the ads is not "nothing new".
+        # Without this the digest reassures about posts it never opened.
+        graph = self._graph_with(200)
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertIn("of 200 ad post(s) read this run",
+                      result.skipped_reason or "")
+
+    def test_full_coverage_is_not_annotated(self):
+        graph = self._graph_with(3)
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertNotIn("call budget", result.skipped_reason or "")
+
+    def test_paused_ads_are_not_requested(self):
+        # A paused ad is not being served, so its comments are shown to
+        # nobody new -- the entire reason for watching ad comments.
+        graph = self._graph_with(1)
+        collect_ad_comments(graph, account(facebook_page_id="100"),
+                            state=self.state)
+        params = graph.last_params.get("act_300/ads", {})
+        self.assertEqual(params.get("effective_status"), '["ACTIVE"]')
+
+    def test_throttling_stops_the_run_instead_of_pushing_through(self):
+        # Continuing after Graph says slow down is what turns a temporary
+        # limit into a blocked app.
+        graph = FakeGraph(
+            {"act_300/ads": {"data": [
+                {"id": f"a{i}", "name": "x", "creative": {
+                    "effective_object_story_id": f"100_{i}"}} for i in range(10)]}},
+            errors={f"100_{i}/comments": GraphError("slow down", code=4)
+                    for i in range(10)},
+        )
+        result = collect_ad_comments(graph, account(facebook_page_id="100"),
+                                     state=self.state)
+        self.assertTrue(result.rate_limited)
+        self.assertEqual(
+            len([c for c in graph.calls if c.endswith("/comments")]), 1,
+            "must stop at the first throttle, not keep trying")
+        self.assertIn("rate-limited", result.skipped_reason)
+
+    def test_a_rate_limit_code_is_recognised(self):
+        for code in (4, 17, 32, 613):
+            self.assertTrue(GraphError("x", code=code).is_rate_limited,
+                            f"code {code} is a Graph throttle")
 
 
 class TestPartialAdFailureIsReported(unittest.TestCase):
@@ -1029,6 +1130,58 @@ class TestStandingProblemsAreNotRepeated(unittest.TestCase):
             state.set_reported_problems("something:broken")
             state.save()
             self.assertEqual(State(path).reported_problems(), "something:broken")
+
+
+class TestCheckTokens(unittest.TestCase):
+    """One dead token makes every source fail, which reads as a dozen
+    unrelated faults. --check-tokens turns that into a single answer."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "accounts.yaml"
+        self.path.write_text(
+            "accounts:\n"
+            "  - name: A\n    token_env: TOK_A\n"
+            "    ads_token_env: TOK_ADS\n    facebook_page_id: 100\n",
+            encoding="utf-8")
+
+        from fbmonitor import cli
+        # Never reach the network from a test.
+        cli.check_tokens_client_factory = lambda token, **kw: FakeGraph(
+            {"me": {"id": "1", "name": "Test Page"}})
+
+    def tearDown(self):
+        from fbmonitor import cli
+        cli.check_tokens_client_factory = None
+        self.dir.cleanup()
+        for name in ("TOK_A", "TOK_ADS"):
+            os.environ.pop(name, None)
+
+    def test_reports_a_missing_token_without_calling_out(self):
+        from fbmonitor.cli import main
+        self.assertEqual(main(["--check-tokens", "--config", str(self.path)]), 1)
+
+    def test_never_prints_a_token(self):
+        import contextlib
+        import io
+
+        from fbmonitor.cli import main
+
+        os.environ["TOK_A"] = "SUPERSECRETVALUE"
+        os.environ["TOK_ADS"] = "ANOTHERSECRET"
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            main(["--check-tokens", "--config", str(self.path)])
+        combined = buf.getvalue() + err.getvalue()
+        self.assertNotIn("SUPERSECRETVALUE", combined)
+        self.assertNotIn("ANOTHERSECRET", combined)
+        # It must still name the variable, or the answer is not actionable.
+        self.assertIn("TOK_A", combined)
+
+    def test_a_bad_config_is_its_own_exit_code(self):
+        from fbmonitor.cli import main
+        self.assertEqual(
+            main(["--check-tokens", "--config", "/nope-does-not-exist.yaml"]), 2)
 
 
 class TestNotifySelfTest(unittest.TestCase):

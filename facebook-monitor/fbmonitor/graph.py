@@ -27,6 +27,12 @@ GRAPH_HOST = "graph.facebook.com"
 # other six collectors from reporting.
 _PERMISSION_CODES = {10, 200, 230, 803}
 
+# Graph signals throttling through the error body with a 200 status, not
+# through HTTP 429, so retrying blindly just digs the hole deeper. Being
+# told to slow down and continuing anyway is how an app gets its access
+# blocked outright rather than merely throttled.
+_RATE_LIMIT_CODES = {4, 17, 32, 613, 80001, 80002, 80003, 80004}
+
 
 class GraphError(RuntimeError):
     """A Graph API call failed."""
@@ -41,6 +47,10 @@ class GraphError(RuntimeError):
     @property
     def is_permission_error(self) -> bool:
         return self.code in _PERMISSION_CODES
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.code in _RATE_LIMIT_CODES
 
 
 class GraphClient:

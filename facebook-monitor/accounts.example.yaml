@@ -36,7 +36,7 @@ accounts:
       # Instagram post comments are off because they cannot work at all:
       # Meta's current app model did not offer instagram_basic, without
       # which the Page's Instagram account cannot even be resolved. Left on,
-      # it would spend calls every 15 minutes to learn that again.
+      # it would spend calls on every run to learn that again.
       # Re-enable if instagram_basic is ever granted. Instagram comments on
       # ADS are unaffected and still read -- those come from the ad
       # creative, not the Page's Instagram account.
@@ -63,7 +63,7 @@ accounts:
       # Instagram post comments are off because they cannot work at all:
       # Meta's current app model did not offer instagram_basic, without
       # which the Page's Instagram account cannot even be resolved. Left on,
-      # it would spend calls every 15 minutes to learn that again.
+      # it would spend calls on every run to learn that again.
       # Re-enable if instagram_basic is ever granted. Instagram comments on
       # ADS are unaffected and still read -- those come from the ad
       # creative, not the Page's Instagram account.
